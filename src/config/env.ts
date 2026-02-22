@@ -56,10 +56,10 @@ export const env = {
       ? requiredEnv("REDIS_URL")
       : process.env.REDIS_URL || "dev_redis_url", 
 
-      FIREBASE_SERVICE_ACCOUNT:
+      FIREBASE_SERVICE_ACCOUNT_BASE64:
     process.env.NODE_ENV === "production"
-      ? requiredEnv("FIREBASE_SERVICE_ACCOUNT")
-      : process.env.FIREBASE_SERVICE_ACCOUNT || "dev_firebase", 
+      ? requiredEnv("FIREBASE_SERVICE_ACCOUNT_BASE64")
+      : process.env.FIREBASE_SERVICE_ACCOUNT_BASE64 || "dev_firebase", 
 
   JWT_ACCESS_EXPIRES_IN: process.env.JWT_ACCESS_EXPIRES_IN || "15m",
   JWT_REFRESH_EXPIRES_IN: process.env.JWT_REFRESH_EXPIRES_IN || "7d",
