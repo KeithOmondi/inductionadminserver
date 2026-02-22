@@ -3,14 +3,14 @@ import { Request, Response, NextFunction } from "express";
 import jwt, { JwtPayload } from "jsonwebtoken";
 import { env } from "../config/env";
 
-type UserRole = "admin" | "judge" | "guest";
+export type UserRole = "admin" | "judge" | "guest";
 
 interface TokenPayload extends JwtPayload {
   id: string;
   role: UserRole;
 }
 
-// FIX: Extend Request without re-defining existing properties manually
+// We extend Request. Note: body, params, and query are inherited automatically.
 export interface AuthRequest extends Request {
   user?: {
     id: string;
@@ -24,8 +24,7 @@ export const protect = (
   next: NextFunction,
 ) => {
   try {
-    // Access cookies via bracket notation or any-casting to bypass the strict check 
-    // if @types/cookie-parser isn't playing nice with the global Request object.
+    // Casting to any for cookies is a safe fallback for Render's environment
     const token = (req as any).cookies?.accessToken;
 
     if (!token) {
@@ -49,4 +48,17 @@ export const protect = (
       message: "Session expired or invalid token",
     });
   }
+};
+
+// ADD THIS BACK: Your routes are importing this, and the build fails without it!
+export const authorize = (...roles: UserRole[]) => {
+  return (req: AuthRequest, res: Response, next: NextFunction) => {
+    if (!req.user || !roles.includes(req.user.role)) {
+      return res.status(403).json({
+        success: false,
+        message: `Role (${req.user?.role}) is not authorized`,
+      });
+    }
+    next();
+  };
 };

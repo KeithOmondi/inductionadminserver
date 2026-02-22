@@ -1,4 +1,4 @@
-// src/config/cloudinary.ts
+/// <reference types="multer" />
 import { v2 as cloudinary, UploadApiResponse } from "cloudinary";
 import { env } from "./env";
 import { Readable } from "stream";
@@ -30,9 +30,9 @@ export const uploadToCloudinary = (
       },
     );
 
+    // Ensure we handle potential errors in the stream
     Readable.from(file.buffer).pipe(uploadStream);
   });
 };
 
-// 🌟 ADD THIS LINE AT THE BOTTOM
 export default cloudinary;
