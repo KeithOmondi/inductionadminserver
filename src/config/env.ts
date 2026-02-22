@@ -17,7 +17,7 @@ const requiredEnv = (name: string): string => {
 
 export const env = {
   PORT: process.env.PORT ? Number(process.env.PORT) : 8000,
-  NODE_ENV: process.env.NODE_ENV || "development",
+  NODE_ENV: process.env.NODE_ENV || "production",
 
   // 1 argument passed, 1 argument expected. Error solved!
   MONGO_URI: requiredEnv("MONGO_URI"),

@@ -10,6 +10,8 @@ interface TokenPayload extends JwtPayload {
 }
 
 export interface AuthRequest extends Request {
+  // This ensures 'cookies' is recognized even if the global augmentation fails
+  cookies: { [key: string]: string }; 
   user?: {
     id: string;
     role: UserRole;
