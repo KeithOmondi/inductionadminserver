@@ -5,22 +5,19 @@ import mongoose from "mongoose";
 import { getIO } from "../socket";
 import { isUserOnline } from "../socket/presence";
 import { getFCMTokensForUsers, sendPushNotification } from "../services/push.service";
-import * as admin from "firebase-admin"; // ✅ this works for TS
+import * as admin from "firebase-admin";
 import { User } from "../models/user.model";
 import { uploadToCloudinary } from "../config/cloudinary";
+import { AuthRequest } from "../middlewares/authMiddleware";
 
 const GUEST_DAILY_LIMIT = 5;
 
 /**
- * Updated Helper: Upload Image 
- * Now uses our robust centralized Cloudinary utility
+ * Centralized Image Upload helper
  */
 const uploadImage = async (file: Express.Multer.File): Promise<string> => {
   try {
-    // We pass the file and the specific folder name
     const result = await uploadToCloudinary(file, "messages");
-    
-    // We return the secure_url (optimized by our config's transformations)
     return result.secure_url;
   } catch (error) {
     console.error("Cloudinary Upload Error:", error);
@@ -29,20 +26,21 @@ const uploadImage = async (file: Express.Multer.File): Promise<string> => {
 };
 
 /* ============================================================
-   USER SEND MESSAGE (Strengthened)
+    USER SEND MESSAGE
 ============================================================ */
-export const sendMessage = async (req: any, res: Response) => {
+export const sendMessage = async (req: AuthRequest, res: Response) => {
   const session = await mongoose.startSession();
   session.startTransaction();
 
   try {
-    const senderId: string = req.user.id;
-    const senderRole: string = req.user.role;
+    // req.user is now safe thanks to AuthRequest
+    const senderId = req.user!.id;
+    const senderRole = req.user!.role;
     const { receiver, group, text } = req.body;
 
     if (!receiver && !group) return res.status(400).json({ message: "Receiver or group required" });
 
-    // PEER-TO-PEER RESTRICTION
+    // Peer-to-peer restriction
     if (receiver && senderRole !== "admin") {
       const targetUser = await User.findById(receiver).select("role").lean();
       if (!targetUser || targetUser.role !== "admin") {
@@ -50,7 +48,7 @@ export const sendMessage = async (req: any, res: Response) => {
       }
     }
 
-    // GROUP VALIDATION
+    // Group validation
     let groupMembers: string[] = [];
     if (group) {
       const groupDoc = await Group.findById(group).select("members isActive").lean();
@@ -59,7 +57,7 @@ export const sendMessage = async (req: any, res: Response) => {
       groupMembers = groupDoc.members.map((m) => m.toString());
     }
 
-    // GUEST LIMITS
+    // Guest limits
     if (senderRole === "guest") {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
@@ -68,7 +66,7 @@ export const sendMessage = async (req: any, res: Response) => {
     }
 
     let imageUrl: string | undefined;
-    if (req.file) imageUrl = await uploadImage(req.file);
+    if (req.file) imageUrl = await uploadImage(req.file as Express.Multer.File);
 
     const [newMessage] = await Message.create(
       [{
@@ -86,11 +84,7 @@ export const sendMessage = async (req: any, res: Response) => {
 
     await session.commitTransaction();
 
-    // Standardize the output: Same as Admin version
-    const message = await Message.findById(newMessage._id)
-      .populate("sender", "name role")
-      .lean();
-
+    const message = await Message.findById(newMessage._id).populate("sender", "name role").lean();
     if (!message) throw new Error("Processing failed");
 
     const io = getIO();
@@ -131,18 +125,17 @@ export const sendMessage = async (req: any, res: Response) => {
 };
 
 /* ================================
-   EDIT MESSAGE (Typo Correction)
+    EDIT MESSAGE
 ================================ */
-export const editMessage = async (req: any, res: Response) => {
+export const editMessage = async (req: AuthRequest, res: Response) => {
   try {
     const { messageId } = req.params;
     const { text } = req.body;
-    const userId = req.user.id;
+    const userId = req.user!.id;
 
     const message = await Message.findOne({ _id: messageId, sender: userId });
     if (!message) return res.status(404).json({ message: "Message not found/unauthorized" });
 
-    // Restrict editing to within 1 hour
     const expiry = 60 * 60 * 1000;
     if (Date.now() - new Date(message.createdAt).getTime() > expiry) {
       return res.status(400).json({ message: "Edit window expired" });
@@ -154,7 +147,6 @@ export const editMessage = async (req: any, res: Response) => {
 
     const updatedMsg = await Message.findById(messageId).populate("sender", "name role");
     
-    // Notify participants
     const io = getIO();
     if (message.group) io.to(message.group.toString()).emit("message:updated", updatedMsg);
     else io.to(message.receiver!.toString()).emit("message:updated", updatedMsg);
@@ -166,12 +158,12 @@ export const editMessage = async (req: any, res: Response) => {
 };
 
 /* ================================
-   GET MESSAGES (Includes Population)
+    GET MESSAGES
 ================================ */
-export const getMessages = async (req: any, res: Response) => {
+export const getMessages = async (req: AuthRequest, res: Response) => {
   try {
     const { receiver, group } = req.query;
-    const userId = req.user.id;
+    const userId = req.user!.id;
     const query: any = { isDeleted: false };
 
     if (group) {
@@ -184,16 +176,10 @@ export const getMessages = async (req: any, res: Response) => {
       ];
     }
 
-    const messages = await Message.find(query)
-      .sort({ createdAt: 1 })
-      .populate("sender", "name role") // Standardizes the sender object
-      .lean();
+    const messages = await Message.find(query).sort({ createdAt: 1 }).populate("sender", "name role").lean();
 
-    // Production check: If a sender was deleted, the population might be null.
-    // We filter or handle that to prevent frontend crashes.
-    const cleanMessages = messages.map(msg => ({
+    const cleanMessages = messages.map((msg: any) => ({
       ...msg,
-      // Ensure sender is always an object or at least has an ID string
       sender: msg.sender || { _id: "deleted_user", name: "Unknown" }
     }));
 
@@ -203,12 +189,9 @@ export const getMessages = async (req: any, res: Response) => {
   }
 };
 
-
-// ... (previous sendMessage and getMessages code)
-
-export const markAsRead = async (req: any, res: Response) => {
+export const markAsRead = async (req: AuthRequest, res: Response) => {
   try {
-    const userId = req.user.id;
+    const userId = req.user!.id;
     const { messageId } = req.params;
     await Message.findByIdAndUpdate(messageId, {
       $addToSet: { readBy: userId },
@@ -219,9 +202,9 @@ export const markAsRead = async (req: any, res: Response) => {
   }
 };
 
-export const deleteMessage = async (req: any, res: Response) => {
+export const deleteMessage = async (req: AuthRequest, res: Response) => {
   try {
-    const userId = req.user.id;
+    const userId = req.user!.id;
     const { messageId } = req.params;
     const msg = await Message.findOne({ _id: messageId, sender: userId });
     if (!msg) return res.status(404).json({ message: "Not allowed" });
@@ -233,9 +216,9 @@ export const deleteMessage = async (req: any, res: Response) => {
   }
 };
 
-export const getUserGroups = async (req: any, res: Response) => {
+export const getUserGroups = async (req: AuthRequest, res: Response) => {
   try {
-    const userId = req.user.id;
+    const userId = req.user!.id;
     const groups = await Group.find({ isActive: true, members: userId })
       .select("name description createdAt")
       .sort({ createdAt: -1 });
@@ -245,18 +228,11 @@ export const getUserGroups = async (req: any, res: Response) => {
   }
 };
 
-
-
 /* ============================================================
-   ADMIN CONTROLLERS
-   These should be protected by an 'isAdmin' middleware
+    ADMIN CONTROLLERS
 ============================================================ */
 
-/**
- * GET ALL MESSAGES (Global Monitor)
- * Allows admins to see all messages across the platform
- */
-export const adminGetAllMessages = async (req: any, res: Response) => {
+export const adminGetAllMessages = async (req: AuthRequest, res: Response) => {
   try {
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 100;
@@ -284,72 +260,42 @@ export const adminGetAllMessages = async (req: any, res: Response) => {
       messages,
     });
   } catch (err) {
-    console.error("AdminGetAllMessages Error:", err);
     return res.status(500).json({ message: "Admin: Failed to fetch all messages" });
   }
 };
 
-/**
- * HARD DELETE MESSAGE
- * Permanently removes a message from the database
- */
-export const adminPermanentDelete = async (req: any, res: Response) => {
+export const adminPermanentDelete = async (req: AuthRequest, res: Response) => {
   try {
     const { messageId } = req.params;
-
     const deletedMessage = await Message.findByIdAndDelete(messageId);
-
-    if (!deletedMessage) {
-      return res.status(404).json({ message: "Message not found" });
-    }
-
+    if (!deletedMessage) return res.status(404).json({ message: "Message not found" });
     return res.status(200).json({ message: "Message permanently purged" });
   } catch (err) {
-    console.error("AdminPermanentDelete Error:", err);
     return res.status(500).json({ message: "Admin: Failed to purge message" });
   }
 };
 
-/**
- * GET SYSTEM STATS
- * Overview of message volume
- */
-export const adminGetStats = async (req: any, res: Response) => {
+export const adminGetStats = async (req: AuthRequest, res: Response) => {
   try {
     const stats = await Message.aggregate([
       { $group: { _id: "$senderType", count: { $sum: 1 } } },
     ]);
-
     const totalMessages = await Message.countDocuments();
     const deletedCount = await Message.countDocuments({ isDeleted: true });
-
-    return res.status(200).json({
-      totalMessages,
-      deletedCount,
-      byRole: stats,
-    });
+    return res.status(200).json({ totalMessages, deletedCount, byRole: stats });
   } catch (err) {
-    console.error("AdminGetStats Error:", err);
     return res.status(500).json({ message: "Admin: Failed to fetch stats" });
   }
 };
 
-
-
-
-
-
 /* =====================================================
-   GROUP MANAGEMENT
+    GROUP MANAGEMENT (Admin Only)
 ===================================================== */
 
-/**
- * CREATE GROUP (Admin Only)
- */
-export const adminCreateGroup = async (req: any, res: Response) => {
+export const adminCreateGroup = async (req: AuthRequest, res: Response) => {
   try {
-    const adminId = req.user.id;
-    const adminRole = req.user.role;
+    const adminId = req.user!.id;
+    const adminRole = req.user!.role;
     const { name, description, members } = req.body;
 
     if (adminRole !== "admin") return res.status(403).json({ message: "Access denied. Admins only." });
@@ -368,41 +314,26 @@ export const adminCreateGroup = async (req: any, res: Response) => {
 
     return res.status(201).json(newGroup);
   } catch (err) {
-    console.error("AdminCreateGroup Error:", err);
     return res.status(500).json({ message: "Failed to create group" });
   }
 };
 
-/**
- * UPDATE GROUP (Admin Only)
- */
-export const adminUpdateGroup = async (req: any, res: Response) => {
+export const adminUpdateGroup = async (req: AuthRequest, res: Response) => {
   try {
     const { groupId } = req.params;
-    const updates = req.body;
-
-    const group = await Group.findByIdAndUpdate(groupId, updates, { new: true });
-
+    const group = await Group.findByIdAndUpdate(groupId, req.body, { new: true });
     if (!group) return res.status(404).json({ message: "Group not found" });
-
     return res.status(200).json(group);
   } catch (err) {
-    console.error("AdminUpdateGroup Error:", err);
     return res.status(500).json({ message: "Failed to update group" });
   }
 };
 
-/**
- * ADD MEMBERS TO GROUP (Admin Only)
- */
-export const adminAddMembers = async (req: any, res: Response) => {
+export const adminAddMembers = async (req: AuthRequest, res: Response) => {
   try {
     const { groupId } = req.params;
     const { userIds } = req.body;
-
-    if (!Array.isArray(userIds) || userIds.length === 0) {
-      return res.status(400).json({ message: "An array of userIds is required" });
-    }
+    if (!Array.isArray(userIds) || userIds.length === 0) return res.status(400).json({ message: "userIds required" });
 
     const group = await Group.findByIdAndUpdate(
       groupId,
@@ -411,98 +342,69 @@ export const adminAddMembers = async (req: any, res: Response) => {
     ).populate("members", "name email");
 
     if (!group) return res.status(404).json({ message: "Group not found" });
-
-    return res.status(200).json({ message: "Members added successfully", group });
+    return res.status(200).json({ message: "Members added", group });
   } catch (err) {
-    console.error("AdminAddMembers Error:", err);
     return res.status(500).json({ message: "Admin: Failed to add members" });
   }
 };
 
-/**
- * REMOVE MEMBER FROM GROUP (Admin Only)
- */
-export const adminRemoveMember = async (req: any, res: Response) => {
+export const adminRemoveMember = async (req: AuthRequest, res: Response) => {
   try {
     const { groupId, userId } = req.params;
-
     const group = await Group.findByIdAndUpdate(groupId, { $pull: { members: userId } }, { new: true });
-
     if (!group) return res.status(404).json({ message: "Group not found" });
-
     return res.status(200).json({ message: "Member removed", group });
   } catch (err) {
-    console.error("AdminRemoveMember Error:", err);
     return res.status(500).json({ message: "Admin: Failed to remove member" });
   }
 };
 
-/**
- * GET ALL GROUPS (Admin Only)
- */
-export const adminGetGroups = async (req: any, res: Response) => {
+export const adminGetGroups = async (req: AuthRequest, res: Response) => {
   try {
-    const groups = await Group.find({ isActive: true })
-      .populate("members", "name email role")
-      .sort({ createdAt: -1 });
-
+    const groups = await Group.find({ isActive: true }).populate("members", "name email role").sort({ createdAt: -1 });
     return res.status(200).json(groups);
   } catch (err) {
-    console.error("AdminGetGroups Error:", err);
     return res.status(500).json({ message: "Failed to fetch groups" });
   }
 };
 
-
-
-/* ============================================================
-   ADMIN SEND MESSAGE (Strengthened)
-============================================================ */
-export const adminSendMessage = async (req: any, res: Response) => {
+export const adminSendMessage = async (req: AuthRequest, res: Response) => {
   const session = await mongoose.startSession();
   session.startTransaction();
 
   try {
-    const adminId = req.user.id;
+    const adminId = req.user!.id;
     const { receiver, group, text } = req.body;
 
     if (!receiver && !group) return res.status(400).json({ message: "Receiver or group required" });
 
     let imageUrl: string | undefined;
-    if (req.file) imageUrl = await uploadImage(req.file);
+    if (req.file) imageUrl = await uploadImage(req.file as Express.Multer.File);
 
     const [newMessage] = await Message.create(
-      [
-        {
-          sender: adminId,
-          receiver: receiver || undefined,
-          group: group || undefined,
-          text,
-          imageUrl,
-          senderType: "admin",
-          readBy: [adminId],
-          deliveryStatus: "sent",
-        },
-      ],
+      [{
+        sender: adminId,
+        receiver: receiver || undefined,
+        group: group || undefined,
+        text,
+        imageUrl,
+        senderType: "admin",
+        readBy: [adminId],
+        deliveryStatus: "sent",
+      }],
       { session }
     );
 
     await session.commitTransaction();
 
-    // Standardize the output: Populate and Lean
-    const message = await Message.findById(newMessage._id)
-      .populate("sender", "name role")
-      .lean();
-
+    const message = await Message.findById(newMessage._id).populate("sender", "name role").lean();
     if (!message) throw new Error("Message creation failed");
 
     const io = getIO();
     const chatId = group || receiver;
 
-    // Emit standardized object
     io.to(chatId).emit("message:new", { ...message, chatId });
 
-    // Handle offline notifications
     if (!group && receiver && !isUserOnline(receiver)) {
       sendPushNotification(receiver, "New Official Message", text || "Image attachment", { 
         messageId: message._id.toString(), 
@@ -513,25 +415,20 @@ export const adminSendMessage = async (req: any, res: Response) => {
     return res.status(201).json(message);
   } catch (err: any) {
     await session.abortTransaction();
-    console.error("AdminSendMessage Error:", err);
     return res.status(500).json({ message: err.message || "Admin send failed" });
   } finally {
     session.endSession();
   }
 };
 
-/**
- * GET CHAT MESSAGES FOR SINGLE USER OR GROUP
- */
-export const adminGetChatMessages = async (req: any, res: Response) => {
+export const adminGetChatMessages = async (req: AuthRequest, res: Response) => {
   try {
-    const adminId = req.user.id;
+    const adminId = req.user!.id;
     const { receiverId, groupId, page = 1, limit = 50 } = req.query;
 
     if (!receiverId && !groupId) return res.status(400).json({ message: "receiverId or groupId required" });
 
     const query: any = { isDeleted: false };
-
     if (groupId) query.group = groupId;
     else if (receiverId) query.$or = [
       { sender: adminId, receiver: receiverId },
@@ -556,7 +453,6 @@ export const adminGetChatMessages = async (req: any, res: Response) => {
       messages,
     });
   } catch (err: any) {
-    console.error("AdminGetChatMessages Error:", err);
     return res.status(500).json({ message: "Failed to fetch chat messages" });
   }
 };
