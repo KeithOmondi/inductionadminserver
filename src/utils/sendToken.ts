@@ -3,10 +3,6 @@ import { generateTokens } from "../services/token.service";
 import { env } from "../config/env";
 import ms, { StringValue } from "ms";
 
-/* =========================
-   Minimal user interface for tokens
-   Only what is needed for response
-========================= */
 interface TokenUser {
   id: string;
   name: string;
@@ -15,16 +11,19 @@ interface TokenUser {
 }
 
 export const sendTokens = (res: Response, user: TokenUser) => {
-  // Generate access & refresh tokens
   const { accessToken, refreshToken } = generateTokens(user.id, user.role);
+
+  const isProduction = env.NODE_ENV === "production";
 
   const cookieOptions = {
     httpOnly: true,
-    secure: env.NODE_ENV === "production",
-    sameSite: "lax" as const,
+    // On Render, this MUST be true
+    secure: isProduction, 
+    // On Render, this MUST be "none" for cross-domain cookies
+    // In dev, "lax" is fine, but "none" requires HTTPS
+    sameSite: isProduction ? ("none" as const) : ("lax" as const),
   };
 
-  // Attach tokens to cookies
   res.cookie("accessToken", accessToken, {
     ...cookieOptions,
     maxAge: ms(env.JWT_ACCESS_EXPIRES_IN as StringValue),
@@ -35,7 +34,6 @@ export const sendTokens = (res: Response, user: TokenUser) => {
     maxAge: ms(env.JWT_REFRESH_EXPIRES_IN as StringValue),
   });
 
-  // Send user info without sensitive data
   res.status(200).json({
     success: true,
     user: {
