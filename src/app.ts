@@ -1,4 +1,3 @@
-// src/app.ts
 import express, { Application, Request, Response } from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
@@ -16,29 +15,49 @@ import { env } from "./config/env";
 
 const app: Application = express();
 
-// ✅ Declare CORS options once
+/**
+ * 1. PROXY CONFIGURATION
+ * Must be set before routes. This allows Express to see the 'X-Forwarded-Proto' 
+ * header from your host (Render/Heroku/Vercel) to verify HTTPS.
+ */
+if (env.NODE_ENV === "production") {
+  app.set("trust proxy", 1);
+}
+
+/**
+ * 2. CORS CONFIGURATION
+ * Note: env.FRONTEND_URL must be the full origin (e.g., https://myapp.vercel.app)
+ * and should NOT have a trailing slash.
+ */
 const corsOptions = {
-  origin: env.FRONTEND_URL, // must match deployed frontend origin exactly
-  credentials: true,        // allow cookies
+  origin: env.FRONTEND_URL, 
+  credentials: true,        // Critical for cookie-based sessions
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
   allowedHeaders: ["Content-Type", "Authorization"],
 };
 
-// ✅ Use CORS middleware
 app.use(cors(corsOptions));
 
-
-
-// Other middleware
+/**
+ * 3. GLOBAL MIDDLEWARE
+ */
 app.use(express.json());
 app.use(cookieParser());
 
-// Health check
+/**
+ * 4. HEALTH CHECK
+ */
 app.get("/health", (req: Request, res: Response) => {
-  res.status(200).json({ status: "ok" });
+  res.status(200).json({ 
+    status: "ok", 
+    timestamp: new Date().toISOString(),
+    environment: env.NODE_ENV 
+  });
 });
 
-// Routes
+/**
+ * 5. API ROUTES
+ */
 app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/chat", messageRoutes);
 app.use("/api/v1/users", userRoutes);
@@ -48,7 +67,9 @@ app.use("/api/v1/guests", guestsRoutes);
 app.use("/api/v1/notices", noticeRoutes);
 app.use("/api/v1/events", eventsRoutes);
 
-// Error handling
+/**
+ * 6. ERROR HANDLING
+ */
 app.use(notFound);
 app.use(errorHandler);
 
