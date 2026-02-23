@@ -21,7 +21,7 @@ export const sendTokens = (res: Response, user: TokenUser) => {
     secure: isProduction, 
     // On Render, this MUST be "none" for cross-domain cookies
     // In dev, "lax" is fine, but "none" requires HTTPS
-    sameSite: isProduction ? ("none" as const) : ("lax" as const),
+    sameSite: "none" as const,
   };
 
   res.cookie("accessToken", accessToken, {
