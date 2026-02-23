@@ -2,6 +2,7 @@
 
 import { Request, Response } from "express";
 import { User } from "../models/user.model";
+import { AuthRequest } from "../middlewares/authMiddleware";
 
 /* =====================================
    👤 GET CURRENT USER PROFILE
@@ -112,4 +113,27 @@ export const deleteUser = async (req: Request, res: Response) => {
     success: true,
     message: "User deleted successfully",
   });
+};
+
+
+export const subscribeToPush = async (req: AuthRequest, res: Response) => {
+  try {
+    const { subscription } = req.body;
+    const userId = req.user!.id;
+
+    if (!subscription || !subscription.endpoint) {
+      return res.status(400).json({ message: "Invalid subscription object" });
+    }
+
+    // We use $addToSet to ensure we don't save the same browser multiple times
+    await User.findByIdAndUpdate(
+      userId,
+      { $addToSet: { webPushSubscriptions: subscription } },
+      { returnDocument: "after" } // Fixing the Mongoose warning here too!
+    );
+
+    return res.status(200).json({ message: "Secure Registry alerts enabled." });
+  } catch (err) {
+    return res.status(500).json({ message: "Failed to link browser to Registry" });
+  }
 };

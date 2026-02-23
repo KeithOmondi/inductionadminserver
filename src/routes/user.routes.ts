@@ -6,6 +6,8 @@ import {
   getUserById,
   updateUser,
   deleteUser,
+  subscribeToPush,
+  
 } from "../controllers/user.controller";
 import { authorize, protect } from "../middlewares/authMiddleware";
 
@@ -36,5 +38,7 @@ router.patch("/:id", protect, authorize("admin"), updateUser);
 
 // Delete user
 router.delete("/:id", protect, authorize("admin"), deleteUser);
+
+router.post("/subscribe", protect, subscribeToPush);
 
 export default router;

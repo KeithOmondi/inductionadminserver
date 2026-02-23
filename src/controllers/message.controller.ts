@@ -4,8 +4,7 @@ import { Group } from "../models/group.model";
 import mongoose from "mongoose";
 import { getIO } from "../socket";
 import { isUserOnline } from "../socket/presence";
-import { getFCMTokensForUsers, sendPushNotification } from "../services/push.service";
-import * as admin from "firebase-admin";
+import { sendWebPush } from "../services/push.service"; // Updated Service
 import { User } from "../models/user.model";
 import { uploadToCloudinary } from "../config/cloudinary";
 import { AuthRequest } from "../middlewares/authMiddleware";
@@ -33,7 +32,6 @@ export const sendMessage = async (req: AuthRequest, res: Response) => {
   session.startTransaction();
 
   try {
-    // req.user is now safe thanks to AuthRequest
     const senderId = req.user!.id;
     const senderRole = req.user!.role;
     const { receiver, group, text } = req.body;
@@ -90,28 +88,39 @@ export const sendMessage = async (req: AuthRequest, res: Response) => {
     const io = getIO();
     
     if (group) {
+      // Socket delivery
       io.to(group).emit("message:new", message); 
+
+      // Web Push Fallback for offline group members
       const offline = groupMembers.filter(id => id !== senderId && !isUserOnline(id));
-      if (offline.length) {
-        const tokens = await getFCMTokensForUsers(offline);
-        if (tokens.length) {
-          await admin.messaging().sendEachForMulticast({
-            tokens,
-            notification: { title: `New Registry Post`, body: text || "Attachment" },
-            data: { messageId: message._id.toString(), groupId: group },
-          });
-        }
-      }
+      offline.forEach(userId => {
+        sendWebPush(
+          userId, 
+          `Registry Update: ${group}`, 
+          text || "New attachment posted", 
+          { messageId: message._id.toString(), groupId: group }
+        );
+      });
+
     } else if (receiver) {
       io.to(receiver).emit("message:new", message);
       io.to(senderId).emit("message:sent", message);
 
       if (isUserOnline(receiver)) {
-        await Message.findByIdAndUpdate(message._id, { deliveryStatus: "delivered" });
+        // FIXED: Deprecation warning fixed with returnDocument
+        await Message.findByIdAndUpdate(
+          message._id, 
+          { deliveryStatus: "delivered" },
+          { returnDocument: 'after' }
+        );
       } else {
-        sendPushNotification(receiver, "New Official Correspondence", text || "Attachment", { 
-          messageId: message._id.toString() 
-        });
+        // Fallback to Web Push
+        sendWebPush(
+          receiver, 
+          "Official Correspondence", 
+          text || "Attachment received", 
+          { messageId: message._id.toString() }
+        );
       }
     }
 
@@ -193,9 +202,13 @@ export const markAsRead = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user!.id;
     const { messageId } = req.params;
-    await Message.findByIdAndUpdate(messageId, {
-      $addToSet: { readBy: userId },
-    });
+    
+    // FIXED: Deprecation warning fixed
+    await Message.findByIdAndUpdate(messageId, 
+      { $addToSet: { readBy: userId } },
+      { returnDocument: 'after' }
+    );
+    
     return res.status(200).json({ message: "Read" });
   } catch {
     return res.status(500).json({ message: "Failed" });
@@ -210,6 +223,12 @@ export const deleteMessage = async (req: AuthRequest, res: Response) => {
     if (!msg) return res.status(404).json({ message: "Not allowed" });
     msg.isDeleted = true;
     await msg.save();
+    
+    // Notify clients via Socket
+    const io = getIO();
+    if (msg.group) io.to(msg.group.toString()).emit("message:updated", msg);
+    else io.to(msg.receiver!.toString()).emit("message:updated", msg);
+
     return res.status(200).json({ message: "Deleted" });
   } catch {
     return res.status(500).json({ message: "Failed" });
@@ -321,7 +340,8 @@ export const adminCreateGroup = async (req: AuthRequest, res: Response) => {
 export const adminUpdateGroup = async (req: AuthRequest, res: Response) => {
   try {
     const { groupId } = req.params;
-    const group = await Group.findByIdAndUpdate(groupId, req.body, { new: true });
+    // FIXED: returnDocument instead of new: true
+    const group = await Group.findByIdAndUpdate(groupId, req.body, { returnDocument: 'after' });
     if (!group) return res.status(404).json({ message: "Group not found" });
     return res.status(200).json(group);
   } catch (err) {
@@ -335,10 +355,11 @@ export const adminAddMembers = async (req: AuthRequest, res: Response) => {
     const { userIds } = req.body;
     if (!Array.isArray(userIds) || userIds.length === 0) return res.status(400).json({ message: "userIds required" });
 
+    // FIXED: returnDocument
     const group = await Group.findByIdAndUpdate(
       groupId,
       { $addToSet: { members: { $each: userIds } } },
-      { new: true },
+      { returnDocument: 'after' },
     ).populate("members", "name email");
 
     if (!group) return res.status(404).json({ message: "Group not found" });
@@ -351,7 +372,8 @@ export const adminAddMembers = async (req: AuthRequest, res: Response) => {
 export const adminRemoveMember = async (req: AuthRequest, res: Response) => {
   try {
     const { groupId, userId } = req.params;
-    const group = await Group.findByIdAndUpdate(groupId, { $pull: { members: userId } }, { new: true });
+    // FIXED: returnDocument
+    const group = await Group.findByIdAndUpdate(groupId, { $pull: { members: userId } }, { returnDocument: 'after' });
     if (!group) return res.status(404).json({ message: "Group not found" });
     return res.status(200).json({ message: "Member removed", group });
   } catch (err) {
@@ -403,10 +425,20 @@ export const adminSendMessage = async (req: AuthRequest, res: Response) => {
     const io = getIO();
     const chatId = group || receiver;
 
+    // Emit Socket
     io.to(chatId).emit("message:new", { ...message, chatId });
 
-    if (!group && receiver && !isUserOnline(receiver)) {
-      sendPushNotification(receiver, "New Official Message", text || "Image attachment", { 
+    // WEB PUSH FALLBACK
+    if (group) {
+        const groupDoc = await Group.findById(group).select("members").lean();
+        if (groupDoc) {
+            const offlineMembers = groupDoc.members.filter(m => m.toString() !== adminId && !isUserOnline(m.toString()));
+            offlineMembers.forEach(mId => {
+                sendWebPush(mId.toString(), "New Registry Post", text || "The Registry has been updated", { messageId: message._id.toString(), groupId: group });
+            });
+        }
+    } else if (receiver && !isUserOnline(receiver)) {
+      sendWebPush(receiver, "New Official Message", text || "Image attachment", { 
         messageId: message._id.toString(), 
         chatId 
       });
