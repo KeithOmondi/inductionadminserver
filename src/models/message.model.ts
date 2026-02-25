@@ -1,6 +1,7 @@
 import { Schema, model, Types, Document } from "mongoose";
 
 export type SenderType = "guest" | "admin" | "judge";
+export type MessageStatus = "sent" | "delivered" | "read";
 
 export interface IMessage extends Document {
   sender: Types.ObjectId;
@@ -9,14 +10,14 @@ export interface IMessage extends Document {
   text?: string;
   imageUrl?: string;
   senderType: SenderType;
-  fcmTokens: string[]; // Added to interface
+  status: MessageStatus;
   readBy: Types.ObjectId[];
   deliveredTo: Types.ObjectId[];
-  deliveryStatus: "sent" | "delivered" | "read";
   isDeleted: boolean;
+  isEdited: boolean;
+  isBroadcast: boolean;
   createdAt: Date;
   updatedAt: Date;
-  isEdited: boolean;
 }
 
 const messageSchema = new Schema<IMessage>(
@@ -42,52 +43,51 @@ const messageSchema = new Schema<IMessage>(
       trim: true,
       maxlength: 5000,
     },
-    imageUrl: {
-      type: String,
-    },
-    fcmTokens: {
-      type: [String],
-      default: [],
-    },
+    imageUrl: String,
     senderType: {
       type: String,
       enum: ["guest", "admin", "judge"],
       required: true,
     },
-    readBy: [{ type: Schema.Types.ObjectId, ref: "User" }],
-    deliveredTo: [{ type: Schema.Types.ObjectId, ref: "User" }],
-    deliveryStatus: {
-      type: String,
-      enum: ["sent", "delivered", "read"],
-      default: "sent",
-    },
-    isDeleted: {
+    isBroadcast: {
       type: Boolean,
       default: false,
     },
+    status: {
+      type: String,
+      enum: ["sent", "delivered", "read"],
+      default: "sent",
+      index: true,
+    },
+    readBy: [{ type: Schema.Types.ObjectId, ref: "User" }],
+    deliveredTo: [{ type: Schema.Types.ObjectId, ref: "User" }],
+    isDeleted: { type: Boolean, default: false },
     isEdited: { type: Boolean, default: false },
   },
   {
     timestamps: true,
-    toJSON: { virtuals: true },
-    toObject: { virtuals: true },
   },
 );
 
 /* ===============================
-    VALIDATION LOGIC
+    VALIDATION (No 'next' used)
 ================================ */
+messageSchema.pre("validate", function (this: IMessage) {
+  // If it's a broadcast, skip receiver/group checks
+  if (this.isBroadcast) {
+    if (!this.text && !this.imageUrl) {
+      throw new Error("Broadcast must contain either text or an image.");
+    }
+    return; // Validation passes
+  }
 
-messageSchema.pre("validate", async function () {
-  // Destination Check
+  // Standard Direct Message Validation
   if (!this.receiver && !this.group) {
     throw new Error("Message must have either receiver or group.");
   }
   if (this.receiver && this.group) {
     throw new Error("Message cannot have both receiver and group.");
   }
-
-  // Content Check
   if (!this.text && !this.imageUrl) {
     throw new Error("Message must contain either text or an image.");
   }
@@ -96,15 +96,8 @@ messageSchema.pre("validate", async function () {
 /* ===============================
     INDEXES
 ================================ */
-
-// Optimized for retrieving latest conversation between two users
 messageSchema.index({ sender: 1, receiver: 1, createdAt: -1 });
 messageSchema.index({ receiver: 1, createdAt: -1 });
-
-// Optimized for retrieving group history
 messageSchema.index({ group: 1, createdAt: -1 });
-
-// Useful for clearing old FCM tokens or debugging delivery
-messageSchema.index({ deliveryStatus: 1 });
 
 export const Message = model<IMessage>("Message", messageSchema);

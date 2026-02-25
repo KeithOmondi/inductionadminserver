@@ -34,99 +34,86 @@ export const sendMessage = async (req: AuthRequest, res: Response) => {
   try {
     const senderId = req.user!.id;
     const senderRole = req.user!.role;
-    const { receiver, group, text } = req.body;
+    let { receiver, group, text, isBroadcast } = req.body;
 
-    if (!receiver && !group) return res.status(400).json({ message: "Receiver or group required" });
+    // 1. Parse isBroadcast (handles string "true" from FormData)
+    const isTrueBroadcast = isBroadcast === "true" || isBroadcast === true;
 
-    // Peer-to-peer restriction
+    /* ================= VIRTUAL ID RESOLUTION ================= */
+    // If a Judge clicks "Registry Admin" (id: admin_private), 
+    // we must find an actual Admin to receive the message.
+    if (receiver === "admin_private") {
+      const adminUser = await User.findOne({ role: "admin" }).select("_id").lean();
+      if (!adminUser) return res.status(404).json({ message: "No Admin found to receive message" });
+      receiver = adminUser._id.toString();
+    }
+
+    /* ================= POLICY ================= */
+    if (isTrueBroadcast && senderRole !== "admin") {
+      return res.status(403).json({ message: "Only Admin can send broadcasts." });
+    }
+
+    if (group && senderRole !== "admin") {
+      return res.status(403).json({ message: "Group messaging restricted." });
+    }
+
     if (receiver && senderRole !== "admin") {
       const targetUser = await User.findById(receiver).select("role").lean();
       if (!targetUser || targetUser.role !== "admin") {
-        return res.status(403).json({ message: "Correspondence restricted to Admin contact." });
+        return res.status(403).json({ message: "Correspondence allowed only with Admin." });
       }
     }
 
-    // Group validation
-    let groupMembers: string[] = [];
-    if (group) {
-      const groupDoc = await Group.findById(group).select("members isActive").lean();
-      if (!groupDoc || !groupDoc.isActive) return res.status(404).json({ message: "Group inactive" });
-      if (!groupDoc.members.some((m) => m.toString() === senderId)) return res.status(403).json({ message: "Unauthorized access to group" });
-      groupMembers = groupDoc.members.map((m) => m.toString());
-    }
+    if (!receiver && !group && !isTrueBroadcast)
+      return res.status(400).json({ message: "Receiver, Group, or Broadcast flag required" });
 
-    // Guest limits
-    if (senderRole === "guest") {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const count = await Message.countDocuments({ sender: senderId, createdAt: { $gte: today } });
-      if (count >= GUEST_DAILY_LIMIT) return res.status(429).json({ message: "Daily record limit reached" });
-    }
-
+    /* ================= IMAGE & CREATE ================= */
     let imageUrl: string | undefined;
     if (req.file) imageUrl = await uploadImage(req.file as Express.Multer.File);
 
     const [newMessage] = await Message.create(
-      [{
-        sender: senderId,
-        receiver,
-        group,
-        text,
-        imageUrl,
-        senderType: senderRole,
-        readBy: [senderId],
-        deliveryStatus: "sent",
-      }],
+      [
+        {
+          sender: senderId,
+          receiver: isTrueBroadcast ? undefined : receiver,
+          group,
+          text,
+          imageUrl,
+          isBroadcast: isTrueBroadcast,
+          senderType: senderRole,
+          readBy: [senderId],
+          status: "sent",
+        },
+      ],
       { session }
     );
 
     await session.commitTransaction();
 
-    const message = await Message.findById(newMessage._id).populate("sender", "name role").lean();
+    const message = await Message.findById(newMessage._id)
+      .populate("sender", "name role")
+      .populate("receiver", "name role") // Useful for admin-side UI
+      .lean();
+
     if (!message) throw new Error("Processing failed");
 
+    /* ================= SOCKET DELIVERY ================= */
     const io = getIO();
-    
-    if (group) {
-      // Socket delivery
-      io.to(group).emit("message:new", message); 
 
-      // Web Push Fallback for offline group members
-      const offline = groupMembers.filter(id => id !== senderId && !isUserOnline(id));
-      offline.forEach(userId => {
-        sendWebPush(
-          userId, 
-          `Registry Update: ${group}`, 
-          text || "New attachment posted", 
-          { messageId: message._id.toString(), groupId: group }
-        );
-      });
-
+    if (isTrueBroadcast) {
+      io.emit("message:broadcast", message); 
+    } else if (group) {
+      io.to(group).emit("message:new", message);
     } else if (receiver) {
+      // Send to the admin's personal room
       io.to(receiver).emit("message:new", message);
-      io.to(senderId).emit("message:sent", message);
-
-      if (isUserOnline(receiver)) {
-        // FIXED: Deprecation warning fixed with returnDocument
-        await Message.findByIdAndUpdate(
-          message._id, 
-          { deliveryStatus: "delivered" },
-          { returnDocument: 'after' }
-        );
-      } else {
-        // Fallback to Web Push
-        sendWebPush(
-          receiver, 
-          "Official Correspondence", 
-          text || "Attachment received", 
-          { messageId: message._id.toString() }
-        );
-      }
+      // Send back to the sender so their UI updates
+      io.to(senderId).emit("message:new", message);
     }
 
     return res.status(201).json(message);
   } catch (err: any) {
-    await session.abortTransaction();
+    if (session.inTransaction()) await session.abortTransaction();
     return res.status(500).json({ message: err.message || "Failed to record message" });
   } finally {
     session.endSession();
@@ -171,28 +158,45 @@ export const editMessage = async (req: AuthRequest, res: Response) => {
 ================================ */
 export const getMessages = async (req: AuthRequest, res: Response) => {
   try {
-    const { receiver, group } = req.query;
     const userId = req.user!.id;
+    const userRole = req.user!.role;
+    // 1. Get isBroadcast from query
+    const { receiver, isBroadcast } = req.query; 
+
     const query: any = { isDeleted: false };
 
-    if (group) {
-      query.group = group;
-    } else if (receiver) {
-      query.group = { $exists: false };
-      query.$or = [
-        { sender: userId, receiver },
-        { sender: receiver, receiver: userId },
-      ];
+    // 2. Separate logic for Broadcast vs. Private
+    if (isBroadcast === 'true') {
+      query.isBroadcast = true;
+    } else {
+      // Logic for Private Thread with Admin
+      query.isBroadcast = { $ne: true }; // Filter out broadcasts
+      
+      if (userRole !== "admin") {
+        // Users can only chat with admins. 
+        // We find messages where user is sender/receiver 
+        // AND the other party is an admin.
+        query.$or = [
+          { sender: userId },
+          { receiver: userId }
+        ];
+      } else {
+        // Admin viewing a specific user
+        if (!receiver) return res.status(400).json({ message: "Receiver ID required" });
+        query.$or = [
+          { sender: userId, receiver: receiver },
+          { sender: receiver, receiver: userId }
+        ];
+      }
     }
 
-    const messages = await Message.find(query).sort({ createdAt: 1 }).populate("sender", "name role").lean();
+    const messages = await Message.find(query)
+      .sort({ createdAt: 1 })
+      .populate("sender", "name role")
+      .populate("receiver", "name role")
+      .lean();
 
-    const cleanMessages = messages.map((msg: any) => ({
-      ...msg,
-      sender: msg.sender || { _id: "deleted_user", name: "Unknown" }
-    }));
-
-    return res.status(200).json(cleanMessages);
+    return res.status(200).json(messages);
   } catch (err) {
     return res.status(500).json({ message: "Fetch failed" });
   }
@@ -238,10 +242,35 @@ export const deleteMessage = async (req: AuthRequest, res: Response) => {
 export const getUserGroups = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user!.id;
-    const groups = await Group.find({ isActive: true, members: userId })
-      .select("name description createdAt")
-      .sort({ createdAt: -1 });
-    return res.status(200).json(groups);
+
+    // 1. Fetch real groups the user is actually a member of
+    const dbGroups = await Group.find({ 
+      isActive: true, 
+      members: userId 
+    })
+    .select("name description createdAt type")
+    .lean();
+
+    // 2. Define the "Virtual" channels every Judge should see
+    const virtualChannels = [
+      {
+        _id: "global_broadcast", // Static ID for the frontend to recognize
+        name: "Official Announcements",
+        description: "Registry-wide broadcasts",
+        type: "broadcast",
+        isReadOnly: true,
+      },
+      {
+        _id: "admin_private", // Static ID for private chat with admin
+        name: "Registry Admin",
+        description: "Direct correspondence with Registry",
+        type: "private",
+        isReadOnly: false,
+      }
+    ];
+
+    // Combine them: Virtual channels first, then specific groups
+    return res.status(200).json([...virtualChannels, ...dbGroups]);
   } catch (err) {
     return res.status(500).json({ message: "Failed to fetch groups" });
   }
@@ -253,33 +282,43 @@ export const getUserGroups = async (req: AuthRequest, res: Response) => {
 
 export const adminGetAllMessages = async (req: AuthRequest, res: Response) => {
   try {
-    const page = Number(req.query.page) || 1;
-    const limit = Number(req.query.limit) || 100;
-    const { senderType, isDeleted } = req.query;
+    const { isBroadcast, receiverId, page = 1, limit = 100 } = req.query;
 
-    const filter: any = {};
-    if (senderType) filter.senderType = senderType;
-    if (isDeleted !== undefined) filter.isDeleted = isDeleted === "true";
+    const filter: any = { isDeleted: false };
+    
+    if (isBroadcast === "true") {
+      // Specifically requesting ONLY broadcasts
+      filter.isBroadcast = true;
+    } else if (receiverId) {
+      // Admin viewing specific user thread
+      filter.isBroadcast = false; 
+      filter.$or = [
+        { sender: req.user!.id, receiver: receiverId },
+        { sender: receiverId, receiver: req.user!.id }
+      ];
+    } else {
+      // GLOBAL VIEW: Fetch everything (Direct, Group, and Broadcast)
+      // Remove any specific isBroadcast filter so everything shows up in logs
+    }
 
     const messages = await Message.find(filter)
-      .populate("sender", "name email")
-      .populate("receiver", "name email")
-      .populate("group", "name")
-      .sort({ createdAt: -1 })
-      .skip((page - 1) * limit)
-      .limit(limit)
+      .populate("sender", "name role")
+      .populate("receiver", "name role")
+      .sort({ createdAt: -1 }) // Sort by NEWEST first for history logs
+      .skip((Number(page) - 1) * Number(limit))
+      .limit(Number(limit))
       .lean();
 
     const total = await Message.countDocuments(filter);
 
     return res.status(200).json({
-      total,
-      page,
-      pages: Math.ceil(total / limit),
       messages,
+      total,
+      page: Number(page),
+      pages: Math.ceil(total / Number(limit))
     });
   } catch (err) {
-    return res.status(500).json({ message: "Admin: Failed to fetch all messages" });
+    return res.status(500).json({ message: "Admin: Failed to fetch messages" });
   }
 };
 
@@ -396,57 +435,94 @@ export const adminSendMessage = async (req: AuthRequest, res: Response) => {
 
   try {
     const adminId = req.user!.id;
-    const { receiver, group, text } = req.body;
+    const { receiver, group, text, isBroadcast } = req.body;
 
-    if (!receiver && !group) return res.status(400).json({ message: "Receiver or group required" });
+    // 1. Updated Validation: Allow if isBroadcast is true even if receiver/group are missing
+    const isTrueBroadcast = isBroadcast === "true" || isBroadcast === true;
+
+    if (!receiver && !group && !isTrueBroadcast) {
+      return res.status(400).json({ message: "Receiver, group, or broadcast flag required" });
+    }
 
     let imageUrl: string | undefined;
     if (req.file) imageUrl = await uploadImage(req.file as Express.Multer.File);
 
+    // 2. Create message with isBroadcast flag
     const [newMessage] = await Message.create(
-      [{
-        sender: adminId,
-        receiver: receiver || undefined,
-        group: group || undefined,
-        text,
-        imageUrl,
-        senderType: "admin",
-        readBy: [adminId],
-        deliveryStatus: "sent",
-      }],
+      [
+        {
+          sender: adminId,
+          receiver: isTrueBroadcast ? undefined : (receiver || undefined),
+          group: isTrueBroadcast ? undefined : (group || undefined),
+          text,
+          imageUrl,
+          senderType: "admin",
+          readBy: [adminId],
+          status: "sent",
+          isBroadcast: isTrueBroadcast,
+        },
+      ],
       { session }
     );
 
     await session.commitTransaction();
 
-    const message = await Message.findById(newMessage._id).populate("sender", "name role").lean();
+    // 3. Populate and Prepare Response
+    const message = await Message.findById(newMessage._id)
+      .populate("sender", "name role")
+      .lean();
     if (!message) throw new Error("Message creation failed");
 
     const io = getIO();
-    const chatId = group || receiver;
 
-    // Emit Socket
-    io.to(chatId).emit("message:new", { ...message, chatId });
+    // 4. Routing Logic: Broadcast vs. Specific Chat
+    if (isTrueBroadcast) {
+      // Option A: Send to everyone connected
+      io.emit("message:broadcast", { ...message });
 
-    // WEB PUSH FALLBACK
-    if (group) {
+      // Trigger Web Push for all Judges (Logic should find all judge IDs)
+      const judges = await User.find({ role: "judge" }).select("_id").lean();
+      judges.forEach((judge) => {
+        if (judge._id.toString() !== adminId && !isUserOnline(judge._id.toString())) {
+          sendWebPush(
+            judge._id.toString(),
+            "Official Registry Broadcast",
+            text || "New broadcast update",
+            { messageId: message._id.toString(), isBroadcast: true }
+          );
+        }
+      });
+    } else {
+      // Standard Group/Private Logic
+      const chatId = group || receiver;
+      io.to(chatId).emit("message:new", { ...message, chatId });
+
+      // Handle Notifications for Group
+      if (group) {
         const groupDoc = await Group.findById(group).select("members").lean();
         if (groupDoc) {
-            const offlineMembers = groupDoc.members.filter(m => m.toString() !== adminId && !isUserOnline(m.toString()));
-            offlineMembers.forEach(mId => {
-                sendWebPush(mId.toString(), "New Registry Post", text || "The Registry has been updated", { messageId: message._id.toString(), groupId: group });
-            });
+          groupDoc.members
+            .filter((m) => m.toString() !== adminId && !isUserOnline(m.toString()))
+            .forEach((mId) =>
+              sendWebPush(mId.toString(), "New Registry Post", text || "The Registry has been updated", {
+                messageId: message._id.toString(),
+                groupId: group,
+              })
+            );
         }
-    } else if (receiver && !isUserOnline(receiver)) {
-      sendWebPush(receiver, "New Official Message", text || "Image attachment", { 
-        messageId: message._id.toString(), 
-        chatId 
-      });
+      } 
+      // Handle Notifications for Private Receiver
+      else if (receiver && !isUserOnline(receiver)) {
+        sendWebPush(receiver, "New Official Message", text || "Attachment", {
+          messageId: message._id.toString(),
+          chatId,
+        });
+      }
     }
 
     return res.status(201).json(message);
   } catch (err: any) {
-    await session.abortTransaction();
+    if (session.inTransaction()) await session.abortTransaction();
     return res.status(500).json({ message: err.message || "Admin send failed" });
   } finally {
     session.endSession();
@@ -456,22 +532,35 @@ export const adminSendMessage = async (req: AuthRequest, res: Response) => {
 export const adminGetChatMessages = async (req: AuthRequest, res: Response) => {
   try {
     const adminId = req.user!.id;
-    const { receiverId, groupId, page = 1, limit = 50 } = req.query;
+    // Add isBroadcast to the destructuring
+    const { receiverId, groupId, isBroadcast, page = 1, limit = 50 } = req.query;
 
-    if (!receiverId && !groupId) return res.status(400).json({ message: "receiverId or groupId required" });
+    // Updated validation: allow if it's a broadcast
+    if (!receiverId && !groupId && isBroadcast !== 'true') {
+      return res.status(400).json({ message: "receiverId, groupId, or broadcast flag required" });
+    }
 
     const query: any = { isDeleted: false };
-    if (groupId) query.group = groupId;
-    else if (receiverId) query.$or = [
-      { sender: adminId, receiver: receiverId },
-      { sender: receiverId, receiver: adminId },
-    ];
+
+    if (isBroadcast === 'true') {
+      // Fetch all messages where isBroadcast is true
+      query.isBroadcast = true;
+    } else if (groupId) {
+      query.group = groupId;
+    } else if (receiverId) {
+      query.$or = [
+        { sender: adminId, receiver: receiverId },
+        { sender: receiverId, receiver: adminId },
+      ];
+      // Important: exclude broadcasts from private chat history
+      query.isBroadcast = { $ne: true };
+    }
 
     const messages = await Message.find(query)
       .populate("sender", "name role email")
       .populate("receiver", "name role email")
       .populate("group", "name")
-      .sort({ createdAt: 1 })
+      .sort({ createdAt: 1 }) // Keep chronological order
       .skip((Number(page) - 1) * Number(limit))
       .limit(Number(limit))
       .lean();

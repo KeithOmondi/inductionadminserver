@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import Event from "../models/event.model";
+import Event, { EventFilter } from "../models/event.model";
 import { AuthRequest } from "../middlewares/authMiddleware";
 
 /* ===============================
@@ -7,8 +7,7 @@ import { AuthRequest } from "../middlewares/authMiddleware";
 ================================ */
 export const createEvent = async (req: AuthRequest, res: Response) => {
   try {
-    const { title, description, location, date, time, type, isMandatory } =
-      req.body;
+    const { title, description, location, date, time, isMandatory } = req.body;
 
     const event = await Event.create({
       title,
@@ -16,7 +15,6 @@ export const createEvent = async (req: AuthRequest, res: Response) => {
       location,
       date,
       time,
-      type,
       isMandatory,
       createdBy: req.user?.id,
     });
@@ -28,19 +26,14 @@ export const createEvent = async (req: AuthRequest, res: Response) => {
 };
 
 /* ===============================
-   GET ALL EVENTS (UPCOMING FIRST)
+   GET EVENTS (FILTERED)
+   ?filter=UPCOMING | PAST | RECENT | ALL
 ================================ */
 export const getEvents = async (req: Request, res: Response) => {
   try {
-    const { type } = req.query;
+    const filter = (req.query.filter as EventFilter) || "ALL";
 
-    const filter: any = {};
-
-    if (type && type !== "ALL") {
-      filter.type = type;
-    }
-
-    const events = await Event.find(filter).sort({ date: 1 });
+    const events = await Event.getFilteredEvents(filter);
 
     res.json(events);
   } catch (error) {

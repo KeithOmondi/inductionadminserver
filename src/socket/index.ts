@@ -7,28 +7,31 @@ import { env } from "../config/env";
 let io: Server;
 
 export const initSocket = async (server: any) => {
-  // Connect Redis
+  // Connect Redis Clients
   await connectRedis();
 
   io = new Server(server, {
     cors: {
-      origin: env.FRONTEND_URL,
+      origin: env.FRONTEND_URL, // e.g., "http://localhost:5173"
       methods: ["GET", "POST"],
       credentials: true,
     },
+    // Adding ping settings helps detect dead connections faster
+    pingTimeout: 60000,
+    pingInterval: 25000,
   });
 
-  // Enable multi-server broadcasting
+  // Enable Redis Adapter for scaling/multi-server support
   io.adapter(createAdapter(pubClient, subClient));
 
   io.on("connection", (socket) => {
+    // Pass the 'io' instance and the specific 'socket' to handlers
     registerSocketHandlers(io, socket);
   });
 
-  console.log("✅ Socket.IO initialized with Redis adapter");
+  console.log("✅ Socket.IO logic attached to server");
 };
 
-// Helper to access io instance elsewhere (controllers)
 export const getIO = () => {
   if (!io) throw new Error("Socket.io not initialized");
   return io;

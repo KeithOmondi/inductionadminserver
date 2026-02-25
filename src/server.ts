@@ -2,23 +2,29 @@ import http from "http";
 import app from "./app";
 import { env } from "./config/env";
 import { connectDB } from "./config/db";
-import { initSocket } from "./socket"; // ⭐ NEW
+import { initSocket } from "./socket"; 
 
 const PORT = env.PORT || 8000;
 
 const startServer = async () => {
-  await connectDB();
+  try {
+    // 1. Connect Database
+    await connectDB();
 
-  // Create HTTP server
-  const server = http.createServer(app);
+    // 2. Create the HTTP server instance
+    const server = http.createServer(app);
 
-  // ⭐ Initialize Socket.IO using our new structure
-  initSocket(server);
+    // 3. Initialize Sockets (AWAIT this to ensure Redis is ready)
+    await initSocket(server);
 
-  // Start server
-  server.listen(PORT, () => {
-    console.log(`🚀 Server running on port ${PORT}`);
-  });
+    // 4. Start listening
+    server.listen(PORT, () => {
+      console.log(`🚀 Server running on port ${PORT}`);
+    });
+  } catch (error) {
+    console.error("❌ Critical Server Failure:", error);
+    process.exit(1);
+  }
 };
 
 startServer();

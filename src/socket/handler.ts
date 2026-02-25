@@ -3,95 +3,61 @@ import { joinRoom } from "./rooms";
 import { addUser, removeUser, isUserOnline, getOnlineUsers } from "./presence";
 
 export const registerSocketHandlers = (io: Server, socket: Socket) => {
-  console.log("Connected:", socket.id);
+  let currentUserId: string | null = null;
 
-  let userId: string | null = null;
-
-  /* ===============================
-     USER SETUP
-  =============================== */
+  // --- 1. SETUP: Triggered when user logs in/opens app ---
   socket.on("setup", (userData: { _id: string }) => {
-    userId = userData._id;
+    currentUserId = userData._id;
+    
+    // Join a private room named after the userId (for 1-on-1 notifications)
+    socket.join(currentUserId);
+    addUser(currentUserId, socket);
 
-    joinRoom(socket, userId);
-    addUser(userId, socket);
-
-    socket.broadcast.emit("presence:online", { userId });
-
-    socket.emit("connected", {
-      onlineUsers: getOnlineUsers(),
-    });
-
-    console.log(`User ${userId} is online`);
+    socket.broadcast.emit("presence:online", { userId: currentUserId });
+    socket.emit("connected", { onlineUsers: getOnlineUsers() });
+    
+    console.log(`📡 Socket ${socket.id} mapped to User ${currentUserId}`);
   });
 
-  /* ===============================
-     JOIN GROUP CHAT
-  =============================== */
+  // --- 2. ROOM MANAGEMENT: Joining a specific chat group ---
   socket.on("join_chat", (roomId: string) => {
-    joinRoom(socket, roomId);
+    socket.join(roomId);
+    console.log(`👥 User ${currentUserId} joined room: ${roomId}`);
   });
 
-  /* ===============================
-     TYPING INDICATOR
-  =============================== */
+  // --- 3. MESSAGE RELAY: This makes it "Real-Time" ---
+  socket.on("message:send", (newMessage: any) => {
+    // Extract the ID of the group/chat
+    const roomId = newMessage.group?._id || newMessage.group;
+
+    if (!roomId) return;
+
+    // .to(roomId) sends to everyone in that room EXCEPT the sender
+    socket.to(roomId).emit("message:new", newMessage);
+  });
+
+  // --- 4. TYPING: Visual feedback ---
   socket.on("typing", (roomId: string) => {
-    socket.to(roomId).emit("typing", { userId });
+    socket.to(roomId).emit("typing", { userId: currentUserId, roomId });
   });
 
   socket.on("stop_typing", (roomId: string) => {
-    socket.to(roomId).emit("stop_typing", { userId });
+    socket.to(roomId).emit("stop_typing", { userId: currentUserId, roomId });
   });
 
-  /* ===============================
-     ⭐ MESSAGE DELIVERED ACK
-     Client confirms message arrived
-  =============================== */
-  socket.on("message:delivered", ({ messageId, senderId }) => {
-    if (!userId) return;
-
-    // Notify sender (all devices)
-    io.to(senderId).emit("message:delivered", {
-      messageId,
-      userId,
-    });
-  });
-
-  /* ===============================
-     ⭐ MESSAGE READ ACK
-     When user opens chat
-  =============================== */
-  socket.on("message:read", ({ messageId, senderId }) => {
-    if (!userId) return;
-
-    io.to(senderId).emit("message:read", {
-      messageId,
-      userId,
-    });
-  });
-
-  /* ===============================
-     PRESENCE CHECK
-  =============================== */
-  socket.on("presence:check", (targetUserId: string, cb) => {
-    cb({ online: isUserOnline(targetUserId) });
-  });
-
-  /* ===============================
-     DISCONNECT
-  =============================== */
+  // --- 5. DISCONNECT: Cleanup ---
   socket.on("disconnect", () => {
-    if (!userId) return;
+    if (!currentUserId) return;
 
-    removeUser(userId, socket.id);
+    removeUser(currentUserId, socket.id);
 
-    if (!isUserOnline(userId)) {
-      io.emit("presence:offline", {
-        userId,
-        lastSeen: new Date(),
+    // If the user has no more active socket connections, they are "offline"
+    if (!isUserOnline(currentUserId)) {
+      io.emit("presence:offline", { 
+        userId: currentUserId, 
+        lastSeen: new Date() 
       });
     }
-
-    console.log(`User ${userId} disconnected`);
+    console.log(`🔌 User ${currentUserId} disconnected`);
   });
 };

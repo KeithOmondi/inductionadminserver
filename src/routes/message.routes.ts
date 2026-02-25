@@ -4,6 +4,11 @@ import { authorize, protect } from "../middlewares/authMiddleware";
 import { upload } from "../middlewares/upload";
 
 const router = Router();
+// Add this to your chat routes file
+router.use((req, res, next) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+  next();
+});
 
 /* ============================================================
    MESSAGE OPERATIONS (Users & Admin)

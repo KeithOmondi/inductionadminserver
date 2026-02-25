@@ -15,14 +15,11 @@ export const sendTokens = (res: Response, user: TokenUser) => {
 
   const isProduction = env.NODE_ENV === "production";
 
-  const cookieOptions = {
-    httpOnly: true,
-    // On Render, this MUST be true
-    secure: isProduction, 
-    // On Render, this MUST be "none" for cross-domain cookies
-    // In dev, "lax" is fine, but "none" requires HTTPS
-    sameSite: "none" as const,
-  };
+ const cookieOptions = {
+  httpOnly: true,
+  secure: isProduction || env.NODE_ENV === "development", // See note below
+  sameSite: isProduction ? ("none" as const) : ("lax" as const),
+};
 
   res.cookie("accessToken", accessToken, {
     ...cookieOptions,
