@@ -2,43 +2,117 @@ import { Request, Response } from "express";
 import Division from "../models/divisionModel";
 import FAQ from "../models/faqModel";
 import Contact from "../models/contactModel";
+import { uploadToCloudinary } from "../config/cloudinary";
 
-// ----------------- READ ALL (for users & admin) -----------------
+/* =====================================================
+    READ ALL (Unified Court Data)
+===================================================== */
 export const getCourtInfo = async (_req: Request, res: Response) => {
   try {
     const [divisions, faqs, contacts] = await Promise.all([
-      Division.find().sort({ name: 1 }),
+      Division.find().sort({ createdAt: -1 }),
       FAQ.find().sort({ createdAt: -1 }),
-      Contact.find(),
+      Contact.find().sort({ title: 1 }),
     ]);
     res.json({ divisions, faqs, contacts });
-  } catch (err) {
-    res.status(500).json({ message: "Failed to fetch court info", error: err });
+  } catch (err: any) {
+    res
+      .status(500)
+      .json({ message: "Failed to fetch registry data", error: err.message });
   }
 };
 
-// ----------------- CRUD for Divisions -----------------
+/* =====================================================
+    DIVISIONS (Handles Person Info & Media)
+===================================================== */
 export const createDivision = async (req: Request, res: Response) => {
   try {
-    const { name } = req.body;
-    const division = await Division.create({ name });
+    const { name, title, description, body } = req.body;
+    const contentItems = [];
+
+    // Handle File Upload if present
+    if (req.file) {
+      const result = await uploadToCloudinary(req.file, "court_divisions");
+      const mime = req.file.mimetype;
+
+      const type = mime.startsWith("video")
+        ? "VIDEO"
+        : mime.startsWith("image")
+          ? "IMAGE"
+          : "FILE";
+
+      contentItems.push({
+        type,
+        url: result.secure_url,
+        publicId: result.public_id,
+        fileName: req.file.originalname,
+        body: body || "",
+        thumbnailUrl:
+          type === "VIDEO" ? result.eager?.[0]?.secure_url : undefined,
+      });
+    } else if (body) {
+      // Text-only entry
+      contentItems.push({ type: "TEXT", body });
+    }
+
+    const division = await Division.create({
+      name,
+      title,
+      description,
+      content: contentItems,
+    });
+
     res.status(201).json(division);
-  } catch (err) {
-    res.status(500).json({ message: "Failed to create division", error: err });
+  } catch (err: any) {
+    res
+      .status(500)
+      .json({ message: "Failed to create division entry", error: err.message });
   }
 };
 
 export const updateDivision = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const division = await Division.findByIdAndUpdate(id, req.body, {
-      new: true,
-    });
+    const { name, title, description, body } = req.body;
+
+    const division = await Division.findById(id);
     if (!division)
       return res.status(404).json({ message: "Division not found" });
+
+    // Update Core Metadata
+    if (name) division.name = name;
+    if (title) division.title = title;
+    if (description) division.description = description;
+
+    // Handle new text-body updates or file updates
+    if (body || req.file) {
+      if (req.file) {
+        const result = await uploadToCloudinary(req.file, "court_divisions");
+        const isVideo = req.file.mimetype.startsWith("video");
+
+        division.content.push({
+          type: isVideo ? "VIDEO" : "IMAGE",
+          url: result.secure_url,
+          publicId: result.public_id,
+          fileName: req.file.originalname,
+          body: body || "",
+          thumbnailUrl: isVideo ? result.eager?.[0]?.secure_url : undefined,
+          createdAt: new Date(),
+        });
+      } else if (body) {
+        // If just body is sent, we update the first content item or push a new one
+        if (division.content.length > 0) {
+          division.content[0].body = body;
+        } else {
+          division.content.push({ type: "TEXT", body, createdAt: new Date() });
+        }
+      }
+    }
+
+    await division.save();
     res.json(division);
-  } catch (err) {
-    res.status(500).json({ message: "Failed to update division", error: err });
+  } catch (err: any) {
+    res.status(500).json({ message: "Update failed", error: err.message });
   }
 };
 
@@ -48,76 +122,42 @@ export const deleteDivision = async (req: Request, res: Response) => {
     const division = await Division.findByIdAndDelete(id);
     if (!division)
       return res.status(404).json({ message: "Division not found" });
-    res.json({ message: "Division deleted successfully" });
-  } catch (err) {
-    res.status(500).json({ message: "Failed to delete division", error: err });
+    res.json({ message: "Division deleted successfully." });
+  } catch (err: any) {
+    res.status(500).json({ message: "Deletion failed", error: err.message });
   }
 };
 
-// ----------------- CRUD for FAQs -----------------
-export const createFAQ = async (req: Request, res: Response) => {
-  try {
-    const { question, answer } = req.body;
-    const faq = await FAQ.create({ question, answer });
-    res.status(201).json(faq);
-  } catch (err) {
-    res.status(500).json({ message: "Failed to create FAQ", error: err });
-  }
-};
+/* =====================================================
+    FAQs & CONTACTS (Generic Handlers)
+===================================================== */
 
-export const updateFAQ = async (req: Request, res: Response) => {
-  try {
-    const { id } = req.params;
-    const faq = await FAQ.findByIdAndUpdate(id, req.body, { new: true });
-    if (!faq) return res.status(404).json({ message: "FAQ not found" });
-    res.json(faq);
-  } catch (err) {
-    res.status(500).json({ message: "Failed to update FAQ", error: err });
-  }
-};
+// Helper to handle simple CRUD to keep file clean
+const handleSimpleAction =
+  (Model: any, action: "create" | "update" | "delete") =>
+  async (req: Request, res: Response) => {
+    try {
+      let data;
+      if (action === "create") data = await Model.create(req.body);
+      if (action === "update")
+        data = await Model.findByIdAndUpdate(req.params.id, req.body, {
+          new: true,
+        });
+      if (action === "delete")
+        data = await Model.findByIdAndDelete(req.params.id);
 
-export const deleteFAQ = async (req: Request, res: Response) => {
-  try {
-    const { id } = req.params;
-    const faq = await FAQ.findByIdAndDelete(id);
-    if (!faq) return res.status(404).json({ message: "FAQ not found" });
-    res.json({ message: "FAQ deleted successfully" });
-  } catch (err) {
-    res.status(500).json({ message: "Failed to delete FAQ", error: err });
-  }
-};
+      if (!data && action !== "create")
+        return res.status(404).json({ message: "Item not found" });
+      res.json(data || { message: "Deleted successfully" });
+    } catch (err: any) {
+      res.status(500).json({ message: "Action failed", error: err.message });
+    }
+  };
 
-// ----------------- CRUD for Contacts -----------------
-export const createContact = async (req: Request, res: Response) => {
-  try {
-    const { title, detail, sub } = req.body;
-    const contact = await Contact.create({ title, detail, sub });
-    res.status(201).json(contact);
-  } catch (err) {
-    res.status(500).json({ message: "Failed to create contact", error: err });
-  }
-};
+export const createFAQ = handleSimpleAction(FAQ, "create");
+export const updateFAQ = handleSimpleAction(FAQ, "update");
+export const deleteFAQ = handleSimpleAction(FAQ, "delete");
 
-export const updateContact = async (req: Request, res: Response) => {
-  try {
-    const { id } = req.params;
-    const contact = await Contact.findByIdAndUpdate(id, req.body, {
-      new: true,
-    });
-    if (!contact) return res.status(404).json({ message: "Contact not found" });
-    res.json(contact);
-  } catch (err) {
-    res.status(500).json({ message: "Failed to update contact", error: err });
-  }
-};
-
-export const deleteContact = async (req: Request, res: Response) => {
-  try {
-    const { id } = req.params;
-    const contact = await Contact.findByIdAndDelete(id);
-    if (!contact) return res.status(404).json({ message: "Contact not found" });
-    res.json({ message: "Contact deleted successfully" });
-  } catch (err) {
-    res.status(500).json({ message: "Failed to delete contact", error: err });
-  }
-};
+export const createContact = handleSimpleAction(Contact, "create");
+export const updateContact = handleSimpleAction(Contact, "update");
+export const deleteContact = handleSimpleAction(Contact, "delete");

@@ -11,6 +11,7 @@ import courtInfoRoutes from "./routes/courtInfoRoutes";
 import guestsRoutes from "./routes/judgeGuestRoutes";
 import noticeRoutes from "./routes/noticeRoutes";
 import eventsRoutes from "./routes/eventRoutes";
+import swearingPreferenceRoutes from "./routes/swearingPreferenceRoutes"
 import { env } from "./config/env";
 
 const app: Application = express();
@@ -66,6 +67,8 @@ app.use("/api/v1/courts", courtInfoRoutes);
 app.use("/api/v1/guests", guestsRoutes);
 app.use("/api/v1/notices", noticeRoutes);
 app.use("/api/v1/events", eventsRoutes);
+app.use("/api/v1/oath", swearingPreferenceRoutes);
+
 
 /**
  * 6. ERROR HANDLING

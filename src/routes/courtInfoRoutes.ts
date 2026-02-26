@@ -12,6 +12,7 @@ import {
   deleteContact,
 } from "../controllers/courtInfoController";
 import { authorize, protect } from "../middlewares/authMiddleware";
+import { upload } from "../middlewares/upload";
 
 const router = express.Router();
 
@@ -19,9 +20,33 @@ const router = express.Router();
 router.get("/get", getCourtInfo);
 
 // ----------------- ADMIN ONLY -----------------
-router.post("/divisions", protect, authorize("admin"), createDivision);
-router.put("/divisions/:id", protect, authorize("admin"), updateDivision);
+
+/**
+ * DIVISIONS
+ * Use upload.single("file") to handle multipart/form-data.
+ * This allows uploading one video/image/document per request 
+ * alongside the 'name' and 'body' text fields.
+ */
+router.post(
+  "/divisions", 
+  protect, 
+  authorize("admin"), 
+  upload.single("file"), // Middleware to intercept the file
+  createDivision
+);
+
+router.put(
+  "/divisions/:id", 
+  protect, 
+  authorize("admin"), 
+  upload.single("file"), // Allows adding new files during updates
+  updateDivision
+);
+
 router.delete("/divisions/:id", protect, authorize("admin"), deleteDivision);
+
+// ----------------- FAQS & CONTACTS -----------------
+// These remain text-only (JSON), so no multer is needed.
 
 router.post("/faqs", protect, authorize("admin"), createFAQ);
 router.put("/faqs/:id", protect, authorize("admin"), updateFAQ);

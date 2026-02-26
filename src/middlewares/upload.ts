@@ -6,7 +6,8 @@ const storage = multer.memoryStorage();
 export const upload = multer({
   storage,
   limits: {
-    fileSize: 5 * 1024 * 1024, // 5MB limit
+    // Increased to 55MB to accommodate larger video files
+    fileSize: 55 * 1024 * 1024, 
   },
   fileFilter: (
     req: Request,
@@ -14,20 +15,27 @@ export const upload = multer({
     cb: FileFilterCallback,
   ) => {
     const allowedTypes = [
+      // Images
       "image/jpeg",
       "image/png",
       "image/webp",
+      // Documents
       "application/pdf",
       "application/msword",
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      // Videos
+      "video/mp4",
+      "video/mpeg",
+      "video/quicktime", // .mov
+      "video/webm",
     ];
+
     if (allowedTypes.includes(file.mimetype)) {
       cb(null, true);
     } else {
-      // Use standard Error object as expected by Multer types
       cb(
         new Error(
-          "Unsupported file format. Please upload JPG, PNG, WEBP, or GIF.",
+          "Unsupported file format. Allowed: JPG, PNG, WEBP, PDF, DOCX, and common Video formats (MP4, MOV, WEBM).",
         ) as any,
         false,
       );

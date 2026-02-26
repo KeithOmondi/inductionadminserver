@@ -14,6 +14,7 @@ export const saveGuestList = async (req: AuthRequest, res: Response) => {
 
     const { guests } = req.body;
 
+    // Optional: Pre-check limit before hitting DB
     if (guests && guests.length > MAX_GUESTS) {
       return res.status(400).json({
         message: `Maximum of ${MAX_GUESTS} guests allowed.`,
@@ -29,7 +30,7 @@ export const saveGuestList = async (req: AuthRequest, res: Response) => {
       {
         upsert: true,
         new: true,
-        runValidators: false, // Draft should not enforce strict validation
+        runValidators: false, // Drafts bypass our pre-save strict validation
       }
     );
 
@@ -52,6 +53,7 @@ export const submitGuestList = async (req: AuthRequest, res: Response) => {
 
     const { guests } = req.body;
 
+    // 1. Basic length checks
     if (!guests || guests.length === 0) {
       return res.status(400).json({
         message: "You must add at least one guest before submitting.",
@@ -64,24 +66,23 @@ export const submitGuestList = async (req: AuthRequest, res: Response) => {
       });
     }
 
-    const guestList = await JudgeGuest.findOneAndUpdate(
-      { user: userId },
-      {
-        guests,
-        status: "SUBMITTED",
-      },
-      {
-        upsert: true,
-        new: true,
-        runValidators: true, // 🔥 Enforce strict validation here
-      }
-    );
+    // 2. Find and Update
+    // We use .save() indirectly or findOneAndUpdate with runValidators
+    // Note: Our pre-save hook in the model handles the specific logic
+    // for Adult (ID/Email) vs Minor (Birth Cert)
+    const guestList = await JudgeGuest.findOne({ user: userId }) || new JudgeGuest({ user: userId });
+    
+    guestList.guests = guests;
+    guestList.status = "SUBMITTED";
+
+    await guestList.save(); // 🔥 This triggers the pre-save hook validation
 
     res.status(200).json({
       message: "Guest list submitted successfully",
       data: guestList,
     });
   } catch (err: any) {
+    // Mongoose validation errors will be caught here
     res.status(400).json({
       message: err.message || "Submission failed",
     });
@@ -112,32 +113,33 @@ export const getMyGuestList = async (req: AuthRequest, res: Response) => {
 };
 
 /* =====================================================
-   ADD MORE GUESTS (AFTER SUBMISSION ALLOWED)
+   ADD MORE GUESTS
 ===================================================== */
 export const addGuests = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id;
     if (!userId) return res.status(401).json({ message: "Unauthorized" });
 
-    const { guests } = req.body; // new guests to add
+    const { guests } = req.body; 
 
     const existing = await JudgeGuest.findOne({ user: userId });
 
     if (!existing) {
-      return res.status(404).json({ message: "No guest list found" });
+      return res.status(404).json({ message: "No guest list found. Please create one first." });
     }
 
     const totalGuests = existing.guests.length + guests.length;
 
     if (totalGuests > MAX_GUESTS) {
       return res.status(400).json({
-        message: `You can only have a maximum of ${MAX_GUESTS} guests.`,
+        message: `Total limit exceeded. Maximum of ${MAX_GUESTS} guests allowed.`,
       });
     }
 
     existing.guests.push(...guests);
 
-    // If already submitted, keep it submitted
+    // This save() will trigger the model validation. 
+    // If the list is "SUBMITTED", new guests must have correct ID/BirthCert info.
     await existing.save();
 
     res.json({
@@ -152,7 +154,7 @@ export const addGuests = async (req: AuthRequest, res: Response) => {
 };
 
 /* =====================================================
-   DELETE MY GUEST LIST (ONLY IF DRAFT)
+   DELETE MY GUEST LIST (DRAFT ONLY)
 ===================================================== */
 export const deleteGuestList = async (req: AuthRequest, res: Response) => {
   try {
@@ -161,12 +163,11 @@ export const deleteGuestList = async (req: AuthRequest, res: Response) => {
 
     const existing = await JudgeGuest.findOne({ user: userId });
 
-    if (!existing)
-      return res.status(404).json({ message: "No guest list found" });
+    if (!existing) return res.status(404).json({ message: "No guest list found" });
 
     if (existing.status === "SUBMITTED") {
       return res.status(400).json({
-        message: "Cannot delete a submitted guest list.",
+        message: "Cannot delete a submitted guest list. Please contact admin for changes.",
       });
     }
 
@@ -176,7 +177,6 @@ export const deleteGuestList = async (req: AuthRequest, res: Response) => {
   } catch (err) {
     res.status(500).json({
       message: "Failed to delete guest list",
-      error: err,
     });
   }
 };
@@ -195,7 +195,6 @@ export const getAllGuestLists = async (_req: Request, res: Response) => {
   } catch (err) {
     res.status(500).json({
       message: "Failed to fetch guest lists",
-      error: err,
     });
   }
 };
