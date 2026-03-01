@@ -1,15 +1,17 @@
-// src/routes/auth.routes.ts
 import { Router } from "express";
 import {
   register,
   login,
   logout,
   logoutAll,
+  forcePasswordReset,
   refreshHandler,
-  sendOneTimeLoginLink,
-  tempLogin,
 } from "../controllers/auth.controller";
-import { protect, authorize } from "../middlewares/authMiddleware";
+
+import {
+  protect,
+  protectResetOnly,
+} from "../middlewares/authMiddleware";
 
 const router = Router();
 
@@ -19,18 +21,25 @@ const router = Router();
 router.post("/register", register);
 router.post("/login", login);
 router.post("/refresh", refreshHandler);
-router.post("/temp-login", tempLogin); // One-time login link endpoint
+
+// Used when admin sends one-time login link
+//router.post("/temp-login", tempLogin);
 
 /* ==============================
-   2️⃣ Protected Routes
+   2️⃣ Reset-Only Route (Scoped Token Required)
+============================== */
+// 🔐 Requires resetToken in Authorization header
+router.post("/force-reset", protectResetOnly, forcePasswordReset);
+
+/* ==============================
+   3️⃣ Protected Routes
 ============================== */
 router.post("/logout", protect, logout);
 router.post("/logout-all", protect, logoutAll);
 
 /* ==============================
-   3️⃣ Admin Routes
+   4️⃣ Admin Routes
 ============================== */
-// Only admin can promote users and send them login links
-router.post("/promote", protect, authorize("admin"), sendOneTimeLoginLink);
+//router.post("/promote", protect, authorize("admin"),sendOneTimeLoginLink);
 
 export default router;

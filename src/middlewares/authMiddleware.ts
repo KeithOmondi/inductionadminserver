@@ -5,26 +5,35 @@ import { env } from "../config/env";
 
 export type UserRole = "admin" | "judge" | "guest";
 
+/* ================================
+   1️⃣ Token Payload Interface
+================================ */
 interface TokenPayload extends JwtPayload {
   id: string;
-  role: UserRole;
+  role?: UserRole;          // Not required for reset tokens
+  resetOnly?: boolean;      // 🔐 Used for forced password reset
 }
 
-// We extend Request. Note: body, params, and query are inherited automatically.
+/* ================================
+   2️⃣ Extended Request Interface
+================================ */
 export interface AuthRequest extends Request {
   user?: {
     id: string;
-    role: UserRole;
+    role?: UserRole;
+    resetOnly?: boolean;
   };
 }
 
+/* ================================
+   3️⃣ Protect (Normal Access Tokens Only)
+================================ */
 export const protect = (
   req: AuthRequest,
   res: Response,
   next: NextFunction,
 ) => {
   try {
-    // Casting to any for cookies is a safe fallback for Render's environment
     const token = (req as any).cookies?.accessToken;
 
     if (!token) {
@@ -34,11 +43,23 @@ export const protect = (
       });
     }
 
-    const decoded = jwt.verify(token, env.JWT_SECRET as string) as TokenPayload;
+    const decoded = jwt.verify(
+      token,
+      env.JWT_SECRET as string
+    ) as TokenPayload;
+
+    // 🚫 Block reset-only tokens from accessing protected routes
+    if (decoded.resetOnly) {
+      return res.status(403).json({
+        success: false,
+        message: "Password reset session cannot access this resource",
+      });
+    }
 
     req.user = {
       id: decoded.id,
       role: decoded.role,
+      resetOnly: decoded.resetOnly,
     };
 
     next();
@@ -50,10 +71,58 @@ export const protect = (
   }
 };
 
-// ADD THIS BACK: Your routes are importing this, and the build fails without it!
+/* ================================
+   4️⃣ Protect Reset-Only Routes
+================================ */
+export const protectResetOnly = (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const authHeader = req.headers.authorization;
+
+    if (!authHeader?.startsWith("Bearer ")) {
+      return res.status(401).json({
+        success: false,
+        message: "Reset session required",
+      });
+    }
+
+    const token = authHeader.split(" ")[1];
+
+    const decoded = jwt.verify(
+      token,
+      env.JWT_SECRET as string
+    ) as TokenPayload;
+
+    if (!decoded.resetOnly) {
+      return res.status(403).json({
+        success: false,
+        message: "Invalid reset session",
+      });
+    }
+
+    req.user = {
+      id: decoded.id,
+      resetOnly: true,
+    };
+
+    next();
+  } catch (error) {
+    return res.status(403).json({
+      success: false,
+      message: "Reset session expired or invalid",
+    });
+  }
+};
+
+/* ================================
+   5️⃣ Role Authorization
+================================ */
 export const authorize = (...roles: UserRole[]) => {
   return (req: AuthRequest, res: Response, next: NextFunction) => {
-    if (!req.user || !roles.includes(req.user.role)) {
+    if (!req.user || !req.user.role || !roles.includes(req.user.role)) {
       return res.status(403).json({
         success: false,
         message: `Role (${req.user?.role}) is not authorized`,

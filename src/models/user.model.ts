@@ -23,6 +23,7 @@ export interface IUser extends Document {
   role: UserRole;
   isVerified: boolean;
   isActive: boolean;
+  needsPasswordReset: boolean; // Forced password change flag
   fcmTokens: string[];
   webPushSubscriptions: IWebPushSubscription[];
   passwordChangedAt?: Date;
@@ -70,6 +71,7 @@ const userSchema = new Schema<IUser>(
     role: { type: String, enum: ["admin", "judge", "guest"], default: "guest" },
     isVerified: { type: Boolean, default: false },
     isActive: { type: Boolean, default: true },
+    needsPasswordReset: { type: Boolean, default: true }, // Defaults to true for new accounts
     fcmTokens: { type: [String], default: [], index: true },
     webPushSubscriptions: [
       {
@@ -96,7 +98,7 @@ const userSchema = new Schema<IUser>(
     3️⃣ Middleware (Async/Await)
 ================================ */
 
-// Password Hashing - Next-less implementation
+// Password Hashing and Flag Management
 userSchema.pre<IUser>("save", async function () {
   if (!this.isModified("password")) return;
 
@@ -106,6 +108,9 @@ userSchema.pre<IUser>("save", async function () {
   // Buffer date slightly for JWT sync issues
   if (!this.isNew) {
     this.passwordChangedAt = new Date(Date.now() - 1000);
+    // If the password is modified on an existing user,
+    // we assume the "force reset" requirement is fulfilled.
+    this.needsPasswordReset = false;
   }
 });
 
@@ -116,8 +121,6 @@ userSchema.pre<IUser>("save", async function () {
 userSchema.methods.comparePassword = async function (
   candidatePassword: string,
 ): Promise<boolean> {
-  // Use 'this.password' if it was selected, otherwise it will be undefined due to select: false
-  // We cast to any to bypass TS complaining about accessing a 'select: false' field
   const userPassword = (this as any).password;
 
   if (!userPassword) {
