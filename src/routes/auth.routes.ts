@@ -9,6 +9,7 @@ import {
 } from "../controllers/auth.controller";
 
 import {
+   authorize,
   protect,
   protectResetOnly,
 } from "../middlewares/authMiddleware";
@@ -34,8 +35,8 @@ router.post("/force-reset", protectResetOnly, forcePasswordReset);
 /* ==============================
    3️⃣ Protected Routes
 ============================== */
-router.post("/logout", protect, logout);
-router.post("/logout-all", protect, logoutAll);
+router.post("/logout", protect, authorize("admin", "judge" ), logout);
+router.post("/logout-all", protect, authorize("admin", "judge" ), logoutAll);
 
 /* ==============================
    4️⃣ Admin Routes
