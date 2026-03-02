@@ -17,9 +17,10 @@ export const sendTokens = (res: Response, user: TokenUser) => {
 
  const cookieOptions = {
   httpOnly: true,
-  secure: isProduction || env.NODE_ENV === "development", // See note below
-  sameSite: isProduction,
+  secure: isProduction, // true in production
+  sameSite: isProduction ? "none" as const : "lax" as const,
 };
+
 
   res.cookie("accessToken", accessToken, {
     ...cookieOptions,
