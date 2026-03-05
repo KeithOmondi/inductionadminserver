@@ -10,7 +10,8 @@ import { uploadToCloudinary } from "../config/cloudinary";
 export const getCourtInfo = async (_req: Request, res: Response) => {
   try {
     const [divisions, faqs, contacts] = await Promise.all([
-      Division.find().sort({ createdAt: -1 }),
+      // Sort primarily by 'order' ascending
+      Division.find().sort({ order: 1, createdAt: -1 }),
       FAQ.find().sort({ createdAt: -1 }),
       Contact.find().sort({ title: 1 }),
     ]);
@@ -27,10 +28,9 @@ export const getCourtInfo = async (_req: Request, res: Response) => {
 ===================================================== */
 export const createDivision = async (req: Request, res: Response) => {
   try {
-    const { name, title, description, body } = req.body;
+    const { name, title, description, body, order } = req.body;
     const contentItems = [];
 
-    // Handle File Upload if present
     if (req.file) {
       const result = await uploadToCloudinary(req.file, "court_divisions");
       const mime = req.file.mimetype;
@@ -51,8 +51,14 @@ export const createDivision = async (req: Request, res: Response) => {
           type === "VIDEO" ? result.eager?.[0]?.secure_url : undefined,
       });
     } else if (body) {
-      // Text-only entry
       contentItems.push({ type: "TEXT", body });
+    }
+
+    // Auto-calculate order if not provided
+    let finalOrder = order;
+    if (finalOrder === undefined) {
+      const lastDiv = await Division.findOne().sort({ order: -1 });
+      finalOrder = lastDiv ? (lastDiv.order || 0) + 1 : 0;
     }
 
     const division = await Division.create({
@@ -60,6 +66,7 @@ export const createDivision = async (req: Request, res: Response) => {
       title,
       description,
       content: contentItems,
+      order: finalOrder
     });
 
     res.status(201).json(division);
@@ -73,18 +80,37 @@ export const createDivision = async (req: Request, res: Response) => {
 export const updateDivision = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { name, title, description, body } = req.body;
+    const { name, title, description, body, order, swapWith } = req.body;
 
     const division = await Division.findById(id);
     if (!division)
       return res.status(404).json({ message: "Division not found" });
 
-    // Update Core Metadata
+    // --- REORDERING LOGIC (Up/Down Drag/Button) ---
+    if (swapWith) {
+      const targetDivision = await Division.findById(swapWith);
+      if (targetDivision) {
+        const currentOrder = division.order || 0;
+        const targetOrder = targetDivision.order || 0;
+
+        division.order = targetOrder;
+        targetDivision.order = currentOrder;
+
+        // Save both before returning
+        await Promise.all([division.save(), targetDivision.save()]);
+        
+        // Return full list so Redux can replace the whole divisions array
+        const allDivisions = await Division.find().sort({ order: 1, createdAt: -1 });
+        return res.json({ message: "Reordered", divisions: allDivisions });
+      }
+    }
+
+    // Update Metadata
     if (name) division.name = name;
     if (title) division.title = title;
     if (description) division.description = description;
+    if (order !== undefined) division.order = order;
 
-    // Handle new text-body updates or file updates
     if (body || req.file) {
       if (req.file) {
         const result = await uploadToCloudinary(req.file, "court_divisions");
@@ -100,7 +126,6 @@ export const updateDivision = async (req: Request, res: Response) => {
           createdAt: new Date(),
         });
       } else if (body) {
-        // If just body is sent, we update the first content item or push a new one
         if (division.content.length > 0) {
           division.content[0].body = body;
         } else {
@@ -131,8 +156,6 @@ export const deleteDivision = async (req: Request, res: Response) => {
 /* =====================================================
     FAQs & CONTACTS (Generic Handlers)
 ===================================================== */
-
-// Helper to handle simple CRUD to keep file clean
 const handleSimpleAction =
   (Model: any, action: "create" | "update" | "delete") =>
   async (req: Request, res: Response) => {

@@ -17,8 +17,9 @@ export interface IDivision extends Document {
   name: string;
   title: string;
   description?: string;
+  order: number; // For manual Up/Down reordering
   content: IDivisionContent[];
-  createdAt: Date; // Added to interface to match timestamps
+  createdAt: Date; 
   updatedAt: Date;
 }
 
@@ -37,7 +38,7 @@ const contentSchema = new Schema<IDivisionContent>(
     thumbnailUrl: { type: String },
     createdAt: { type: Date, default: Date.now }
   },
-  { _id: true } // Keeps unique IDs for specific content items if needed
+  { _id: true } 
 );
 
 // 3. Main Division Schema
@@ -57,13 +58,21 @@ const divisionSchema = new Schema<IDivision>(
       type: String, 
       trim: true 
     },
+    order: { 
+      type: Number, 
+      default: 0 
+    },
     content: [contentSchema],
   },
   { 
     timestamps: true,
-    versionKey: false // Optional: removes the __v field for cleaner JSON
+    versionKey: false 
   }
 );
+
+// Added an index for the order field. 
+// This is critical for performance when we sort the registry list.
+divisionSchema.index({ order: 1 });
 
 // 4. Export Model
 const Division = mongoose.model<IDivision>("Division", divisionSchema);

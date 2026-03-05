@@ -8,25 +8,22 @@ const seedUsers = async () => {
 
     console.log("Connected to DB...");
 
-    // Optional: clear existing users
-    await User.deleteMany({});
-
-    const users = await User.create([
+    const seedData = [
       {
         name: "Hon. Clara Otieno Omondi",
         email: "claraotieno23@gmail.com",
         password: "123456789",
-        role: "judge",
+        role: "admin",
         isVerified: true,
-        needsPasswordReset: false,
+        needsPasswordReset: true,
       },
       {
         name: "Hon. Jeffrey Sagirai",
         email: "jeffrey.sagirai@gmail.com",
-        password: "Admin123!",
+        password: "123456789",
         role: "judge",
         isVerified: true,
-        needsPasswordReset: false,
+        needsPasswordReset: true,
       },
       {
         name: "Omondi Keith",
@@ -36,14 +33,30 @@ const seedUsers = async () => {
         isVerified: true,
         needsPasswordReset: true,
       },
-    ]);
+      {
+        name: "Omondi Keith",
+        email: "denniskeith62@gmail.com",
+        password: "123456789",
+        role: "judge",
+        isVerified: true,
+        needsPasswordReset: false,
+      },
+    ];
 
-    console.log("Users seeded successfully:");
-    users.forEach((u) =>
-      console.log(`- ${u.role.toUpperCase()} → ${u.email}`)
-    );
+    for (const userData of seedData) {
+      const existingUser = await User.findOne({ email: userData.email });
 
+      if (!existingUser) {
+        const newUser = await User.create(userData);
+        console.log(`✅ Added → ${newUser.email}`);
+      } else {
+        console.log(`⚠️ Skipped (already exists) → ${existingUser.email}`);
+      }
+    }
+
+    console.log("Seeding complete.");
     process.exit(0);
+
   } catch (error) {
     console.error("Seeding failed:", error);
     process.exit(1);
