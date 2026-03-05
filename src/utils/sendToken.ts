@@ -15,21 +15,22 @@ export const sendTokens = (res: Response, user: TokenUser) => {
 
   const isProduction = env.NODE_ENV === "production";
 
- const cookieOptions = {
-  httpOnly: true,
-  secure: isProduction, // true in production
-  sameSite: isProduction ? "none" as const : "lax" as const,
-};
-
+  const cookieOptions = {
+    httpOnly: true,
+    secure: isProduction,
+    sameSite: isProduction ? "none" as const : "lax" as const,
+  };
 
   res.cookie("accessToken", accessToken, {
     ...cookieOptions,
     maxAge: ms(env.JWT_ACCESS_EXPIRES_IN as StringValue),
+    path: "/", 
   });
 
   res.cookie("refreshToken", refreshToken, {
     ...cookieOptions,
     maxAge: ms(env.JWT_REFRESH_EXPIRES_IN as StringValue),
+    path: "/api/v1/auth/refresh",
   });
 
   res.status(200).json({
