@@ -3,6 +3,7 @@ import JudgeGuest from "../models/judgeGuest";
 import { AuthRequest } from "../middlewares/authMiddleware";
 import PDFDocument from "pdfkit";
 import judgeGuest from "../models/judgeGuest";
+import axios from "axios";
 
 const MAX_GUESTS = 5;
 
@@ -206,190 +207,195 @@ export const getAllGuestLists = async (_req: Request, res: Response) => {
 ===================================================== */
 export const downloadAllGuestsPDF = async (_req: Request, res: Response) => {
   try {
-    const guestLists = await JudgeGuest.find({ status: "SUBMITTED" }).populate(
-      "user",
-      "name email"
-    );
+    const guestLists = await JudgeGuest.find({ status: "SUBMITTED" }).populate<{
+      user: { name: string; email: string };
+    }>("user", "name email");
 
-    const doc = new PDFDocument({ margin: 50, size: "A4" });
-    const filename = `Master_Guest_List_${Date.now()}.pdf`;
-
-    res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", `attachment; filename=${filename}`);
-    doc.pipe(res);
-
-    // --- Institutional Header Helper ---
-    const drawOfficialHeader = (badgeText: string) => {
-      const headerY = 40;
-      const LOGO_URL = "https://res.cloudinary.com/drls2cpnu/image/upload/v1772111715/JOB_LOGO_ebsbgu.jpg"; // <-- INSERT LOGO URL HERE
-
-      // 1. Logo (Left side)
-      try {
-        doc.image(LOGO_URL, 50, headerY, { width: 85 });
-      } catch (e) {
-        // Fallback placeholder if URL fails
-        doc.rect(50, headerY, 85, 45).strokeColor("#eee").stroke();
-      }
-
-      // 2. Institutional Title (Center)
-      doc.fillColor("#001529").font("Helvetica-Bold").fontSize(11);
-      doc.text("OFFICE OF THE REGISTRAR HIGH COURT", 150, headerY + 5, { align: "center", width: 300 });
-      doc.fontSize(9).font("Helvetica").fillColor("#555").text("REPUBLIC OF KENYA", 150, headerY + 20, { align: "center", width: 300 });
-
-      // Centered Green Badge (Pill Style)
-      const badgeWidth = 160;
-      const badgeX = 150 + (300 / 2) - (badgeWidth / 2);
-      doc.roundedRect(badgeX, headerY + 35, badgeWidth, 18, 5).fill("#e6f7f0");
-      doc.fillColor("#006d4e").font("Helvetica-Bold").fontSize(8).text(badgeText.toUpperCase(), badgeX, headerY + 41, { align: "center", width: badgeWidth });
-
-      // 3. QR Verification Area (Right side)
-      doc.rect(490, headerY, 48, 48).strokeColor("#eee").stroke();
-      doc.fontSize(6).fillColor("#999").text("VERIFY REPORT", 485, headerY + 55, { width: 58, align: "center" });
-
-      // Thin Divider Line
-      doc.moveTo(50, headerY + 75).lineTo(545, headerY + 75).lineWidth(0.5).strokeColor("#d9d9d9").stroke();
-      doc.moveDown(4);
-    };
-
-    drawOfficialHeader("Registry Compliance Audit");
-    doc.moveDown(2);
-
-    if (guestLists.length === 0) {
-      doc.font("Helvetica-Oblique").text("No submitted records found in the registry.", { align: "center" });
-    } else {
-      let currentY = 140;
-
-      guestLists.forEach((list: any, index) => {
-        // Check for page overflow
-        if (currentY > 700) {
-          doc.addPage();
-          drawOfficialHeader("Registry Compliance Audit");
-          currentY = 140;
-        }
-
-        // Judge Subsection Header (Grey Bar)
-        doc.rect(50, currentY, 495, 22).fill("#f4f4f4");
-        doc.fillColor("#1a3a32").font("Helvetica-Bold").fontSize(9);
-        doc.text(`${index + 1}. JUDGE: ${(list.user?.name || "N/A").toUpperCase()}`, 60, currentY + 7);
-        currentY += 25;
-
-        // Grid Header
-        doc.rect(50, currentY, 495, 18).fill("#1a3a32");
-        doc.fillColor("white").fontSize(8).text("GUEST NAME", 60, currentY + 5);
-        doc.text("TYPE", 220, currentY + 5);
-        doc.text("ID / BIRTH CERT", 300, currentY + 5);
-        doc.text("CONTACT", 420, currentY + 5);
-        currentY += 18;
-
-        // Guest Rows
-        list.guests.forEach((g: any, i: number) => {
-          // Alternating Zebra Stripes
-          if (i % 2 !== 0) doc.rect(50, currentY, 495, 15).fill("#fafafa");
-          doc.fillColor("#333").font("Helvetica").fontSize(8);
-          
-          const idVal = g.type === "ADULT" ? g.idNumber : g.birthCertNumber;
-          doc.text(g.name, 60, currentY + 4);
-          doc.text(g.type, 220, currentY + 4);
-          doc.text(idVal || "-", 300, currentY + 4);
-          doc.text(g.phone || "-", 420, currentY + 4);
-          currentY += 15;
-
-          // Inner Page Break Logic
-          if (currentY > 750) {
-            doc.addPage();
-            drawOfficialHeader("Registry Compliance Audit");
-            currentY = 140;
-          }
-        });
-        currentY += 15;
-      });
+    // Fetch the logo buffer once
+    const LOGO_URL = "https://res.cloudinary.com/drls2cpnu/image/upload/v1772111715/JOB_LOGO_ebsbgu.jpg";
+    let logoBuffer: Buffer | null = null;
+    try {
+      const response = await axios.get(LOGO_URL, { responseType: "arraybuffer" });
+      logoBuffer = Buffer.from(response.data, "utf-8");
+    } catch (e) {
+      console.error("Logo fetch failed");
     }
 
-    // Footer
-    doc.fontSize(7).fillColor("#aaa").text(`Consolidated Report - Generated on ${new Date().toLocaleString()}`, 50, 785, { align: "center" });
+    const doc = new PDFDocument({ margin: 50, size: "A4", bufferPages: true });
+    const DEEP_GREEN = "#25443c";
+    const JUDICIAL_GOLD = "#d9b929";
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename=Master_Audit_Report.pdf`);
+    doc.pipe(res);
+
+    const drawHeader = (title: string) => {
+      // Draw Logo from Buffer
+      if (logoBuffer) {
+        doc.image(logoBuffer, 50, 40, { width: 70 });
+      }
+
+      doc.fillColor(DEEP_GREEN).font("Times-Bold").fontSize(14)
+         .text("THE JUDICIARY OF KENYA", 130, 45, { align: "center", width: 340 });
+      
+      doc.fontSize(10).font("Helvetica-Bold").fillColor("#555")
+         .text("OFFICE OF THE REGISTRAR - HIGH COURT", 130, 62, { align: "center", width: 340 });
+
+      doc.rect(210, 78, 180, 16).fill(JUDICIAL_GOLD);
+      doc.fillColor(DEEP_GREEN).font("Helvetica-Bold").fontSize(8)
+         .text(title.toUpperCase(), 210, 83, { align: "center", width: 180, characterSpacing: 1 });
+
+      doc.moveTo(50, 105).lineTo(545, 105).lineWidth(2).strokeColor(DEEP_GREEN).stroke();
+    };
+
+    drawHeader("ORHC Compliance Audit Report");
+
+    let currentY = 130;
+    guestLists.forEach((list, idx) => {
+      if (currentY > 680) {
+        doc.addPage();
+        drawHeader("ORHC Compliance Audit Report");
+        currentY = 130;
+      }
+
+      doc.rect(50, currentY, 495, 22).fill("#f4f6f4");
+      doc.fillColor(DEEP_GREEN).font("Times-Bold").fontSize(10)
+         .text(`${idx + 1}.${(list.user?.name || "N/A").toUpperCase()}`, 65, currentY + 7);
+      currentY += 28;
+
+      doc.rect(50, currentY, 495, 18).fill(DEEP_GREEN);
+      doc.fillColor("white").font("Helvetica-Bold").fontSize(8);
+      doc.text("GUEST NAME", 65, currentY + 5);
+      doc.text("TYPE", 220, currentY + 5);
+      doc.text("ID / CERT NO", 320, currentY + 5);
+      doc.text("CONTACT", 450, currentY + 5);
+      currentY += 18;
+
+      list.guests.forEach((g: any, i: number) => {
+        if (i % 2 !== 0) doc.rect(50, currentY, 495, 16).fill("#fafafa");
+        doc.fillColor("#333").font("Helvetica").fontSize(8);
+        doc.text(g.name, 65, currentY + 4);
+        doc.text(g.type, 220, currentY + 4);
+        doc.text(g.idNumber || g.birthCertNumber || "-", 320, currentY + 4);
+        doc.text(g.phone || "-", 450, currentY + 4);
+        currentY += 16;
+      });
+      currentY += 25;
+    });
+
+    // Add page numbers
+    const range = doc.bufferedPageRange();
+    for (let i = range.start; i < range.start + range.count; i++) {
+      doc.switchToPage(i);
+      doc.fontSize(7).fillColor("#aaa").text(
+        `Page ${i + 1} of ${range.count}  |  Official ORHC Document`,
+        50, 785, { align: "center" }
+      );
+    }
 
     doc.end();
   } catch (err) {
-    res.status(500).json({ message: "Failed to generate master report" });
+    res.status(500).json({ message: "Failed to generate report" });
   }
 };
 
 /* =====================================================
-    ADMIN: DOWNLOAD SINGLE JUDGE GUEST LIST PDF
+ ADMIN: DOWNLOAD SINGLE JUDGE GUEST LIST PDF
 ===================================================== */
 export const downloadJudgeGuestPDF = async (req: Request, res: Response) => {
   try {
     const { userId } = req.params;
+    
+    // Explicit typing for the populated user
     const guestList = await JudgeGuest.findOne({ user: userId }).populate<{
       user: { name: string; email: string };
     }>("user", "name email");
 
-    if (!guestList) return res.status(404).json({ message: "Guest list not found" });
+    if (!guestList) return res.status(404).json({ message: "List not found" });
 
-    const doc = new PDFDocument({ margin: 50, size: "A4" });
-    const judgeName = guestList.user?.name || "Unknown";
-    const LOGO_URL = "https://res.cloudinary.com/drls2cpnu/image/upload/v1772111715/JOB_LOGO_ebsbgu.jpg"; // <-- INSERT LOGO URL HERE
-
-    res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", `attachment; filename=Guest_List_${judgeName.replace(/\s+/g, "_")}.pdf`);
-    doc.pipe(res);
-
-    // --- Header Section ---
-    const headerY = 40;
+    // 1. Fetch Logo Buffer (Fixes missing logo issue)
+    const LOGO_URL = "https://res.cloudinary.com/drls2cpnu/image/upload/v1772111715/JOB_LOGO_ebsbgu.jpg";
+    let logoBuffer: Buffer | null = null;
     try {
-      doc.image(LOGO_URL, 50, headerY, { width: 85 });
+      const response = await axios.get(LOGO_URL, { responseType: "arraybuffer" });
+      logoBuffer = Buffer.from(response.data, "utf-8");
     } catch (e) {
-      doc.rect(50, headerY, 85, 45).strokeColor("#eee").stroke();
+      console.error("Logo fetch failed, proceeding with text-only header.");
     }
 
-    doc.fillColor("#001529").font("Helvetica-Bold").fontSize(11);
-    doc.text("OFFICE OF THE REGISTRAR HIGH COURT", 150, headerY + 5, { align: "center", width: 300 });
-    doc.fontSize(9).font("Helvetica").fillColor("#555").text("REPUBLIC OF KENYA", 150, headerY + 20, { align: "center", width: 300 });
+    const doc = new PDFDocument({ margin: 50, size: "A4" });
+    const DEEP_GREEN = "#25443c";
+    const JUDICIAL_GOLD = "#d9b929";
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename=Authorized_Guest_List_${guestList.user.name.replace(/\s+/g, '_')}.pdf`);
+    doc.pipe(res);
+
+    // --- Institutional Header ---
+    if (logoBuffer) {
+      doc.image(logoBuffer, 50, 40, { width: 70 });
+    } else {
+      // Placeholder if logo fails to load
+      doc.rect(50, 40, 70, 45).lineWidth(0.5).strokeColor("#eee").stroke();
+    }
+    
+    doc.fillColor(DEEP_GREEN).font("Times-Bold").fontSize(14)
+       .text("THE JUDICIARY OF KENYA", 130, 45, { align: "center", width: 340 });
+    
+    doc.fontSize(10).font("Helvetica-Bold").fillColor("#555")
+       .text("OFFICE OF THE REGISTRAR - HIGH COURT", 130, 62, { align: "center", width: 340 });
     
     // Authorization Badge
-    doc.roundedRect(225, headerY + 35, 150, 18, 5).fill("#e6f7f0");
-    doc.fillColor("#006d4e").font("Helvetica-Bold").fontSize(8).text("GUEST AUTHORIZATION", 225, headerY + 41, { align: "center", width: 150 });
+    doc.rect(210, 78, 180, 16).fill(JUDICIAL_GOLD);
+    doc.fillColor(DEEP_GREEN).font("Helvetica-Bold").fontSize(8)
+       .text("APPROVED GUEST LIST", 210, 83, { align: "center", width: 180, characterSpacing: 0.5 });
     
-    // QR Area Placeholder
-    doc.rect(490, headerY, 48, 48).strokeColor("#eee").stroke();
-    doc.moveTo(50, headerY + 75).lineTo(545, headerY + 75).lineWidth(0.5).strokeColor("#d9d9d9").stroke();
+    // Thick Accent Line
+    doc.moveTo(50, 105).lineTo(545, 105).lineWidth(2).strokeColor(DEEP_GREEN).stroke();
 
-    // --- Officer Meta Section ---
-    let currentY = 140;
-    doc.fillColor("#333").font("Helvetica-Bold").fontSize(10).text("OFFICER/JUDGE:", 50, currentY);
-    doc.font("Helvetica").text(judgeName.toUpperCase(), 160, currentY);
+    // --- Meta Details Section ---
+    let currentY = 130;
+    doc.fillColor(DEEP_GREEN).font("Helvetica-Bold").fontSize(9).text("JUDGE:", 50, currentY);
+    doc.fillColor("#333").font("Helvetica").text(`${guestList.user.name.toUpperCase()}`, 160, currentY);
     
-    doc.font("Helvetica-Bold").text("ISSUED ON:", 50, currentY + 15);
-    doc.font("Helvetica").text(new Date().toLocaleDateString(), 160, currentY + 15);
+    doc.fillColor(DEEP_GREEN).font("Helvetica-Bold").text("DATE ISSUED:", 50, currentY + 15);
+    doc.fillColor("#333").font("Helvetica").text(new Date().toLocaleDateString('en-GB'), 160, currentY + 15);
     
-    doc.font("Helvetica-Bold").text("LIST STATUS:", 350, currentY + 15);
-    doc.fillColor("#006d4e").text(guestList.status, 430, currentY + 15);
+    doc.fillColor(DEEP_GREEN).font("Helvetica-Bold").text("STATUS:", 380, currentY + 15);
+    doc.fillColor(JUDICIAL_GOLD).text(guestList.status.toUpperCase(), 450, currentY + 15);
 
+    // --- Guest Table ---
     currentY += 45;
-
-    // --- Data Table ---
-    doc.rect(50, currentY, 495, 20).fill("#1a3a32");
-    doc.fillColor("white").font("Helvetica-Bold").fontSize(9);
-    doc.text("S/N", 60, currentY + 6);
-    doc.text("NAME OF GUEST", 95, currentY + 6);
-    doc.text("CATEGORY", 250, currentY + 6);
-    doc.text("IDENTIFICATION", 340, currentY + 6);
-    doc.text("CONTACT", 450, currentY + 6);
     
+    // Table Header
+    doc.rect(50, currentY, 495, 20).fill(DEEP_GREEN);
+    doc.fillColor("white").font("Helvetica-Bold").fontSize(8.5);
+    doc.text("S/N", 60, currentY + 6);
+    doc.text("GUEST NAME", 95, currentY + 6);
+    doc.text("CATEGORY", 250, currentY + 6);
+    doc.text("IDENTIFICATION", 350, currentY + 6);
+    doc.text("CONTACT", 450, currentY + 6);
+
     currentY += 20;
+    
+    // Table Rows
     guestList.guests.forEach((g: any, i: number) => {
+      // Zebra stripping
       if (i % 2 !== 0) doc.rect(50, currentY, 495, 20).fill("#f9f9f9");
-      doc.fillColor("#333").font("Helvetica").fontSize(8);
+      
+      doc.fillColor("#333").font("Helvetica").fontSize(8.5);
       
       const idInfo = g.type === "ADULT" ? (g.idNumber || "-") : (g.birthCertNumber || "-");
+      
       doc.text((i + 1).toString(), 60, currentY + 7);
       doc.text(g.name, 95, currentY + 7);
       doc.text(g.type, 250, currentY + 7);
-      doc.text(idInfo, 340, currentY + 7);
+      doc.text(idInfo, 350, currentY + 7);
       doc.text(g.phone || "-", 450, currentY + 7);
+      
       currentY += 20;
 
-      // Handle pagination
+      // Logic to prevent table breaking into the signature
       if (currentY > 700) {
         doc.addPage();
         currentY = 50; 
@@ -398,13 +404,21 @@ export const downloadJudgeGuestPDF = async (req: Request, res: Response) => {
 
     // --- Official Signature Block ---
     const sigY = 720;
-    doc.moveTo(380, sigY).lineTo(540, sigY).lineWidth(0.5).strokeColor("#000").stroke();
-    doc.fontSize(8).font("Helvetica-Bold").text("FOR: CHIEF REGISTRAR", 400, sigY + 5);
-    
-    doc.font("Helvetica-Oblique").fontSize(7).fillColor("#888").text("This document is valid only when presented with original identification for security clearance.", 50, 785, { align: "center" });
+    doc.moveTo(380, sigY).lineTo(540, sigY).lineWidth(0.8).strokeColor("#222").stroke();
+    doc.fontSize(8).font("Helvetica-Bold").fillColor(DEEP_GREEN)
+       .text("FOR: CHIEF REGISTRAR", 380, sigY + 5, { align: "center", width: 160 });
+
+    // Confidentiality Footer
+    doc.fontSize(7).font("Helvetica-Oblique").fillColor("#999")
+       .text("This document is a property of the High Court. Validity is subject to verification of identification documents.", 50, 785, { align: "center" });
 
     doc.end();
-  } catch (err: any) {
-    res.status(500).json({ message: "Error generating authorization PDF" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to generate authorization PDF" });
   }
 };
+
+//CONSOLIDATED GUEST LIST
+
+//THE JUDICIARY  / ORHC
