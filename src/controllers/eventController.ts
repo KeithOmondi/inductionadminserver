@@ -7,21 +7,37 @@ import { AuthRequest } from "../middlewares/authMiddleware";
 ================================ */
 export const createEvent = async (req: AuthRequest, res: Response) => {
   try {
-    const { title, description, location, date, time, isMandatory } = req.body;
+    const { 
+      title, 
+      description, 
+      location, 
+      date, 
+      endTime, 
+      time, 
+      isMandatory, 
+      status, 
+      capacity 
+    } = req.body;
 
     const event = await Event.create({
       title,
       description,
       location,
       date,
+      endTime,
       time,
       isMandatory,
+      status: status || "SCHEDULED",
+      capacity,
       createdBy: req.user?.id,
     });
 
+    // We return the event; Mongoose will automatically include the 'scheduledAt' 
+    // virtual because we set toJSON: { virtuals: true } in the model.
     res.status(201).json(event);
   } catch (error) {
-    res.status(500).json({ message: "Failed to create event" });
+    console.error("Create Event Error:", error);
+    res.status(500).json({ message: "Failed to create judicial event record" });
   }
 };
 
@@ -33,11 +49,13 @@ export const getEvents = async (req: Request, res: Response) => {
   try {
     const filter = (req.query.filter as EventFilter) || "ALL";
 
+    // The model's static method already handles the logic for 
+    // UPCOMING (date >= today) and PAST (older or cancelled/completed)
     const events = await Event.getFilteredEvents(filter);
 
     res.json(events);
   } catch (error) {
-    res.status(500).json({ message: "Failed to fetch events" });
+    res.status(500).json({ message: "Failed to fetch registry events" });
   }
 };
 
@@ -46,15 +64,16 @@ export const getEvents = async (req: Request, res: Response) => {
 ================================ */
 export const getEventById = async (req: Request, res: Response) => {
   try {
-    const event = await Event.findById(req.params.id);
+    const event = await Event.findById(req.params.id)
+      .populate("createdBy", "name role");
 
     if (!event) {
-      return res.status(404).json({ message: "Event not found" });
+      return res.status(404).json({ message: "Event not found in registry" });
     }
 
     res.json(event);
   } catch (error) {
-    res.status(500).json({ message: "Failed to fetch event" });
+    res.status(500).json({ message: "Error retrieving event details" });
   }
 };
 
@@ -69,13 +88,14 @@ export const updateEvent = async (req: AuthRequest, res: Response) => {
       return res.status(404).json({ message: "Event not found" });
     }
 
+    // Merge updates (useful for updating status to ONGOING or COMPLETED)
     Object.assign(event, req.body);
 
     const updated = await event.save();
 
     res.json(updated);
   } catch (error) {
-    res.status(500).json({ message: "Failed to update event" });
+    res.status(500).json({ message: "Failed to update judicial record" });
   }
 };
 
@@ -87,13 +107,13 @@ export const deleteEvent = async (req: AuthRequest, res: Response) => {
     const event = await Event.findById(req.params.id);
 
     if (!event) {
-      return res.status(404).json({ message: "Event not found" });
+      return res.status(404).json({ message: "Event record not found" });
     }
 
     await event.deleteOne();
 
-    res.json({ message: "Event deleted successfully" });
+    res.json({ message: "Event permanently removed from registry" });
   } catch (error) {
-    res.status(500).json({ message: "Failed to delete event" });
+    res.status(500).json({ message: "Failed to delete event record" });
   }
 };

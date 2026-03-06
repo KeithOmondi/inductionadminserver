@@ -29,7 +29,7 @@ const seedUsers = async () => {
         name: "Omondi Keith",
         email: "kd.omondi1@gmail.com",
         password: "123456789",
-        role: "judge",
+        role: "guest",
         isVerified: true,
         needsPasswordReset: true,
       },

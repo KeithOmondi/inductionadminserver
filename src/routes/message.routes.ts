@@ -152,4 +152,29 @@ router.get(
   ChatCtrl.adminGetChatMessages
 );
 
+//guest routes
+// Send a message (with optional image)
+router.post(
+  "/send",
+  protect,
+  authorize("guest"),
+  ChatCtrl.guestSendMessage
+);
+
+// Get messages for the logged-in guest
+router.get(
+  "/guest",
+  protect,
+  authorize("guest"),
+  ChatCtrl.guestGetMessages
+);
+
+// Mark a message as read
+router.patch(
+  "/read/:messageId",
+  protect,
+  authorize("guest"),
+  ChatCtrl.guestMarkAsRead
+);
+
 export default router;

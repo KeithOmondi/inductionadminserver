@@ -19,6 +19,6 @@ router.get("/me", protect, getMySwearingPreference);
 router.get("/get", protect, authorize("admin"), getAllSwearingPreferences);
 router.get("/:userId", protect, authorize("admin"), getSwearingPreferenceByUser);
 router.put("/:userId", protect, authorize("admin"), adminUpdateSwearingPreference);
-router.delete("/:userId", protect, authorize("admin"), deleteSwearingPreference);
+router.delete("/delete/:userId", protect, authorize("admin"), deleteSwearingPreference);
 
 export default router;

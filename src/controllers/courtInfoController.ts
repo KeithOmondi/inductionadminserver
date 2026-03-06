@@ -153,6 +153,85 @@ export const deleteDivision = async (req: Request, res: Response) => {
   }
 };
 
+//GUEST CONTROLLER
+/* =====================================================
+    PUBLIC COURT DATA (READ ONLY)
+===================================================== */
+/* =====================================================
+    PUBLIC COURT DATA (READ ONLY)
+===================================================== */
+export const getPublicCourtInfo = async (_req: Request, res: Response) => {
+  try {
+    const [divisions, faqs, contacts] = await Promise.all([
+      // Ensure we get the full 'content' array which contains the IMAGE/VIDEO URLs
+      Division.find()
+        .select("-__v") 
+        .sort({ order: 1, createdAt: -1 }),
+
+      FAQ.find()
+        .select("-__v")
+        .sort({ createdAt: -1 }),
+
+      Contact.find()
+        .select("-__v")
+        .sort({ title: 1 }),
+    ]);
+
+    // Flattened response to match what the frontend expects
+    res.status(200).json({
+      divisions, // Now contains: name, title, description, content (media), etc.
+      faqs,
+      contacts,
+    });
+  } catch (err: any) {
+    res.status(500).json({
+      message: "Failed to fetch public court information",
+      error: err.message,
+    });
+  }
+};
+
+/* =====================================================
+    PUBLIC INDIVIDUAL ENDPOINTS
+===================================================== */
+
+export const getPublicDivisions = async (_req: Request, res: Response) => {
+  try {
+    // Explicitly ensuring we don't accidentally filter out the media content
+    const divisions = await Division.find()
+      .select("-__v")
+      .sort({ order: 1, createdAt: -1 });
+
+    res.json(divisions); // Return flat array
+  } catch (err: any) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+export const getPublicFAQs = async (_req: Request, res: Response) => {
+  try {
+    const faqs = await FAQ.find()
+      .select("-__v")
+      .sort({ createdAt: -1 });
+
+    res.json({ success: true, data: faqs });
+  } catch (err: any) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+export const getPublicContacts = async (_req: Request, res: Response) => {
+  try {
+    const contacts = await Contact.find()
+      .select("-__v")
+      .sort({ title: 1 });
+
+    res.json({ success: true, data: contacts });
+  } catch (err: any) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
 /* =====================================================
     FAQs & CONTACTS (Generic Handlers)
 ===================================================== */

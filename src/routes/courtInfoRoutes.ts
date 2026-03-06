@@ -10,6 +10,10 @@ import {
   createContact,
   updateContact,
   deleteContact,
+  getPublicCourtInfo,
+  getPublicDivisions,
+  getPublicFAQs,
+  getPublicContacts,
 } from "../controllers/courtInfoController";
 import { authorize, protect } from "../middlewares/authMiddleware";
 import { upload } from "../middlewares/upload";
@@ -24,23 +28,23 @@ router.get("/get", getCourtInfo);
 /**
  * DIVISIONS
  * Use upload.single("file") to handle multipart/form-data.
- * This allows uploading one video/image/document per request 
+ * This allows uploading one video/image/document per request
  * alongside the 'name' and 'body' text fields.
  */
 router.post(
-  "/divisions", 
-  protect, 
-  authorize("admin"), 
+  "/divisions",
+  protect,
+  authorize("admin"),
   upload.single("file"), // Middleware to intercept the file
-  createDivision
+  createDivision,
 );
 
 router.put(
-  "/divisions/:id", 
-  protect, 
-  authorize("admin"), 
+  "/divisions/:id",
+  protect,
+  authorize("admin"),
   upload.single("file"), // Allows adding new files during updates
-  updateDivision
+  updateDivision,
 );
 
 router.delete("/divisions/:id", protect, authorize("admin"), deleteDivision);
@@ -55,5 +59,13 @@ router.delete("/faqs/:id", protect, authorize("admin"), deleteFAQ);
 router.post("/contacts", protect, authorize("admin"), createContact);
 router.put("/contacts/:id", protect, authorize("admin"), updateContact);
 router.delete("/contacts/:id", protect, authorize("admin"), deleteContact);
+
+//GUEST ROUTES
+/* Public Read Only */
+router.get("/court-info", getPublicCourtInfo);
+
+router.get("/divisions", protect, authorize("guest"), getPublicDivisions);
+router.get("/faqs", protect, authorize("guest"), getPublicFAQs);
+router.get("/contacts", protect, authorize("guest"), getPublicContacts);
 
 export default router;

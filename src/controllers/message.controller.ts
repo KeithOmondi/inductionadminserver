@@ -11,6 +11,7 @@ import { AuthRequest } from "../middlewares/authMiddleware";
 
 const GUEST_DAILY_LIMIT = 5;
 
+
 /**
  * Centralized Image Upload helper
  */
@@ -575,5 +576,136 @@ export const adminGetChatMessages = async (req: AuthRequest, res: Response) => {
     });
   } catch (err: any) {
     return res.status(500).json({ message: "Failed to fetch chat messages" });
+  }
+};
+
+/**
+ * Guest: Send Message
+ * - Guests can only send messages to Admin
+ * - Max daily limit enforced
+ */
+export const guestSendMessage = async (req: AuthRequest, res: Response) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    const guestId = req.user!.id;
+
+    // 1️⃣ Daily limit check
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const messagesSentToday = await Message.countDocuments({
+      sender: guestId,
+      createdAt: { $gte: today },
+    });
+
+    if (messagesSentToday >= GUEST_DAILY_LIMIT) {
+      return res.status(403).json({
+        message: `Guest daily limit of ${GUEST_DAILY_LIMIT} messages reached`,
+      });
+    }
+
+    // 2️⃣ Guests cannot broadcast or send to groups
+    const { text, group } = req.body;
+    if (group) return res.status(403).json({ message: "Guests cannot send to groups" });
+    if (!text?.trim()) return res.status(400).json({ message: "Message text required" });
+
+    // 3️⃣ Resolve Admin as receiver
+    const admin = await User.findOne({ role: "admin" }).select("_id").lean();
+    if (!admin) return res.status(404).json({ message: "Admin not available" });
+
+    // 4️⃣ Optional image upload
+    let imageUrl: string | undefined;
+    if (req.file) imageUrl = await uploadImage(req.file as Express.Multer.File);
+
+    // 5️⃣ Create message within transaction
+    const [newMessage] = await Message.create(
+      [
+        {
+          sender: guestId,
+          receiver: admin._id,
+          text,
+          imageUrl,
+          senderType: "guest",
+          readBy: [guestId],
+          status: "sent",
+          isBroadcast: false,
+        },
+      ],
+      { session }
+    );
+
+    await session.commitTransaction();
+
+    // 6️⃣ Populate message for response
+    const message = await Message.findById(newMessage._id)
+      .populate("sender", "name role")
+      .populate("receiver", "name role")
+      .lean();
+
+    if (!message) throw new Error("Message creation failed");
+
+    // 7️⃣ Socket delivery to admin + guest
+    const io = getIO();
+    io.to(admin._id.toString()).emit("message:new", message);
+    io.to(guestId).emit("message:new", message);
+
+    // 8️⃣ Web push if admin offline
+    if (!isUserOnline(admin._id.toString())) {
+      sendWebPush(
+        admin._id.toString(),
+        "New Guest Message",
+        text || "You have a new guest message",
+        { messageId: message._id.toString() }
+      );
+    }
+
+    return res.status(201).json(message);
+  } catch (err: any) {
+    if (session.inTransaction()) await session.abortTransaction();
+    return res.status(500).json({ message: err.message || "Guest send failed" });
+  } finally {
+    session.endSession();
+  }
+};
+/**
+ * Guest: Get Messages
+ * - Guests only see their messages with Admin
+ */
+export const guestGetMessages = async (req: AuthRequest, res: Response) => {
+  try {
+    const guestId = req.user!.id;
+
+    const messages = await Message.find({
+      isDeleted: false,
+      $or: [
+        { sender: guestId },
+        { receiver: guestId }
+      ]
+    })
+      .sort({ createdAt: 1 })
+      .populate("sender", "name role")
+      .populate("receiver", "name role")
+      .lean();
+
+    return res.status(200).json(messages);
+  } catch (err) {
+    return res.status(500).json({ message: "Failed to fetch guest messages" });
+  }
+};
+
+/**
+ * Guest: Mark message as read
+ */
+export const guestMarkAsRead = async (req: AuthRequest, res: Response) => {
+  try {
+    const guestId = req.user!.id;
+    const { messageId } = req.params;
+
+    await Message.findByIdAndUpdate(messageId, { $addToSet: { readBy: guestId } }, { returnDocument: "after" });
+
+    return res.status(200).json({ message: "Marked as read" });
+  } catch {
+    return res.status(500).json({ message: "Failed to mark read" });
   }
 };

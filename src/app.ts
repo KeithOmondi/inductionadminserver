@@ -68,6 +68,7 @@ app.use("/api/v1/guests", guestsRoutes);
 app.use("/api/v1/notices", noticeRoutes);
 app.use("/api/v1/events", eventsRoutes);
 app.use("/api/v1/oath", swearingPreferenceRoutes);
+//app.use("/api/v1/guests", guestRoutes);
 
 
 /**

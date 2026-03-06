@@ -6,6 +6,8 @@ import {
   getMyGuestList,
   deleteGuestList,
   getAllGuestLists,
+  downloadAllGuestsPDF,
+  downloadJudgeGuestPDF,
 } from "../controllers/judgeGuestController";
 import { protect, authorize } from "../middlewares/authMiddleware";
 
@@ -37,5 +39,9 @@ router.delete("/delete", protect, deleteGuestList);
 
 // Admin can view all guest lists
 router.get("/admin/all", protect, authorize("admin"), getAllGuestLists);
+
+// router.ts
+router.get("/all/report", protect, authorize("admin"), downloadAllGuestsPDF);
+router.get("/report/:userId", protect, authorize("admin"), downloadJudgeGuestPDF);
 
 export default router;
