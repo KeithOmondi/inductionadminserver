@@ -145,11 +145,7 @@ export const forcePasswordReset = async (req: Request, res: Response) => {
 export const refreshHandler = async (req: Request, res: Response) => {
   const refreshToken = req.cookies.refreshToken;
 
-  if (!refreshToken) {
-    return res
-      .status(401)
-      .json({ success: false, message: "No session found" });
-  }
+  if (!refreshToken) return res.sendStatus(401);
 
   try {
     const decoded = jwt.verify(
@@ -163,37 +159,31 @@ export const refreshHandler = async (req: Request, res: Response) => {
     if (!storedToken) {
       res.clearCookie("accessToken");
       res.clearCookie("refreshToken");
-      return res
-        .status(403)
-        .json({ success: false, message: "Session invalid" });
+      return res.sendStatus(403);
     }
 
     await deleteRefreshToken(tokenHash);
 
     const user = await User.findById(decoded.id);
-    if (!user) {
-      return res
-        .status(404)
-        .json({ success: false, message: "User not found" });
-    }
 
-    // 🚫 Block refresh if reset still required
+    if (!user) return res.sendStatus(404);
+
     if (user.needsPasswordReset) {
-      return res
-        .status(403)
-        .json({ success: false, message: "Password reset required" });
+      return res.status(403).json({
+        success: false,
+        message: "Password reset required",
+      });
     }
 
     sendTokens(res, user);
+
   } catch {
     res.clearCookie("accessToken");
     res.clearCookie("refreshToken");
-    return res.status(403).json({
-      success: false,
-      message: "Session expired",
-    });
+    return res.sendStatus(403);
   }
 };
+
 
 /* =====================================
    5️⃣ LOGOUT

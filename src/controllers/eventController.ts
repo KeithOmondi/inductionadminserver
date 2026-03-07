@@ -117,3 +117,41 @@ export const deleteEvent = async (req: AuthRequest, res: Response) => {
     res.status(500).json({ message: "Failed to delete event record" });
   }
 };
+
+/* ===============================
+   GUEST: GET ALL EVENTS (PUBLIC)
+================================ */
+export const getPublicEvents = async (req: Request, res: Response) => {
+  try {
+    // Guests get the "ALL" filter by default
+    const filter = (req.query.filter as EventFilter) || "ALL";
+    
+    // Using the same static method from your Model
+    const events = await Event.getFilteredEvents(filter);
+
+    // If you ever want to hide fields from guests, you'd do it here
+    res.json(events);
+  } catch (error) {
+    console.error("Public Fetch Error:", error);
+    res.status(500).json({ message: "Error fetching public event registry" });
+  }
+};
+
+/* ===============================
+   GUEST: GET SINGLE EVENT (PUBLIC)
+================================ */
+export const getPublicEventById = async (req: Request, res: Response) => {
+  try {
+    const event = await Event.findById(req.params.id)
+      .select("-__v") // Example: Hiding internal version keys from guests
+      .populate("createdBy", "name"); // Only show name, hide role from guests
+
+    if (!event) {
+      return res.status(404).json({ message: "Event not found" });
+    }
+
+    res.json(event);
+  } catch (error) {
+    res.status(500).json({ message: "Error retrieving event details" });
+  }
+};

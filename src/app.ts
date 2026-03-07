@@ -12,6 +12,7 @@ import guestsRoutes from "./routes/judgeGuestRoutes";
 import noticeRoutes from "./routes/noticeRoutes";
 import eventsRoutes from "./routes/eventRoutes";
 import swearingPreferenceRoutes from "./routes/swearingPreferenceRoutes"
+import gallaryRoutes from "./routes/gallery.routes"
 import { env } from "./config/env";
 
 const app: Application = express();
@@ -38,6 +39,8 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
+app.use(express.json()); // For parsing application/json
+app.use(express.urlencoded({ extended: true })); // For parsing application/x-www-form-urlencoded
 
 /**
  * 3. GLOBAL MIDDLEWARE
@@ -68,7 +71,7 @@ app.use("/api/v1/guests", guestsRoutes);
 app.use("/api/v1/notices", noticeRoutes);
 app.use("/api/v1/events", eventsRoutes);
 app.use("/api/v1/oath", swearingPreferenceRoutes);
-//app.use("/api/v1/guests", guestRoutes);
+app.use("/api/v1/gallary", gallaryRoutes);
 
 
 /**

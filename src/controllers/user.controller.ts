@@ -1,7 +1,6 @@
 import { Request, Response } from "express";
 import { User } from "../models/user.model";
 import { AuthRequest } from "../middlewares/authMiddleware";
-import bcrypt from "bcryptjs";
 
 export const getProfile = async (req: AuthRequest, res: Response) => {
   const user = await User.findById(req.user!.id).select("-password");
@@ -31,15 +30,17 @@ export const updateProfile = async (req: AuthRequest, res: Response) => {
 export const getAllUsers = async (req: Request, res: Response) => {
   try {
     const users = await User.find().select("-password").sort({ createdAt: -1 });
-    
+
     // Explicitly return an empty array if no users exist to avoid frontend 'map' errors
-    return res.status(200).json({ 
-      success: true, 
+    return res.status(200).json({
+      success: true,
       count: users.length,
-      users: users || [] 
+      users: users || [],
     });
   } catch (err: any) {
-    return res.status(500).json({ success: false, message: "Registry retrieval failed" });
+    return res
+      .status(500)
+      .json({ success: false, message: "Registry retrieval failed" });
   }
 };
 
@@ -60,24 +61,22 @@ export const createUser = async (req: AuthRequest, res: Response) => {
   try {
     const { name, email, password, role } = req.body;
 
+    // Basic validation
     if (!name || !email || !password) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "Name, email, and password required",
-        });
+      return res.status(400).json({
+        success: false,
+        message: "Name, email, and password required",
+      });
     }
 
     if (!["admin", "judge", "guest"].includes(role)) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "Role must be admin, judge, or guest",
-        });
+      return res.status(400).json({
+        success: false,
+        message: "Role must be admin, judge, or guest",
+      });
     }
 
+    // Check if user exists
     const existingUser = await User.findOne({ email });
     if (existingUser) {
       return res
@@ -85,14 +84,15 @@ export const createUser = async (req: AuthRequest, res: Response) => {
         .json({ success: false, message: "Email already in use" });
     }
 
-    const hashedPassword = await bcrypt.hash(password, 10);
-
+    // ✅ Let the schema hook handle password hashing
     const newUser = await User.create({
       name,
-      email,
-      password: hashedPassword,
+      email: email.toLowerCase().trim(),
+      password, // plain password, hashed automatically
       role,
       isActive: true,
+      loginAttempts: 0,
+      needsPasswordReset: false,
     });
 
     return res.status(201).json({
@@ -100,12 +100,10 @@ export const createUser = async (req: AuthRequest, res: Response) => {
       user: { ...newUser.toObject(), password: undefined },
     });
   } catch (err: any) {
-    return res
-      .status(500)
-      .json({
-        success: false,
-        message: err.message || "Failed to create user",
-      });
+    return res.status(500).json({
+      success: false,
+      message: err.message || "Failed to create user",
+    });
   }
 };
 
@@ -134,12 +132,10 @@ export const updateUser = async (req: Request, res: Response) => {
 
     return res.status(200).json({ success: true, user });
   } catch (err: any) {
-    return res
-      .status(500)
-      .json({
-        success: false,
-        message: err.message || "Failed to update user",
-      });
+    return res.status(500).json({
+      success: false,
+      message: err.message || "Failed to update user",
+    });
   }
 };
 

@@ -5,6 +5,8 @@ import {
   getEventById,
   updateEvent,
   deleteEvent,
+  getPublicEvents,
+  getPublicEventById,
 } from "../controllers/eventController";
 import { protect, authorize } from "../middlewares/authMiddleware";
 
@@ -32,5 +34,12 @@ router.put("/update/:id", protect, authorize("admin"), updateEvent);
 
 // Delete event
 router.delete("/delete/:id", protect, authorize("admin"), deleteEvent);
+
+/* ===============================
+   GUEST / PUBLIC ROUTES
+================================ */
+// Anyone can hit these
+router.get("/public", protect, authorize("guest"), getPublicEvents);
+router.get("/public/:id", protect, authorize("guest"), getPublicEventById);
 
 export default router;

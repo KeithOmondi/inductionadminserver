@@ -4,177 +4,96 @@ import { authorize, protect } from "../middlewares/authMiddleware";
 import { upload } from "../middlewares/upload";
 
 const router = Router();
-// Add this to your chat routes file
+
 router.use((req, res, next) => {
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
   next();
 });
 
 /* ============================================================
-   MESSAGE OPERATIONS (Users & Admin)
+   GENERAL MESSAGE OPERATIONS (Judges & Admin)
 ============================================================ */
 
-// Send message (User -> Admin, User -> Group, or Admin -> User)
+// Send message (Judge -> Admin, Judge -> Group)
 router.post(
   "/messages", 
   protect, 
+  authorize("admin", "judge"), // Restricted from guests
   upload.single("image"), 
   ChatCtrl.sendMessage
 );
 
-// Get conversation history (Private or Group)
-router.get(
-  "/messages", 
-  protect, 
-  ChatCtrl.getMessages
-);
-
-// EDIT Message (New: For typo corrections within the time window)
-router.patch(
-  "/messages/:messageId", 
-  protect, 
-  ChatCtrl.editMessage
-);
-
-// Mark as read
-router.patch(
-  "/messages/:messageId/read", 
-  protect, 
-  ChatCtrl.markAsRead
-);
-
-// Soft delete sender's own message
-router.delete(
-  "/messages/:messageId", 
-  protect, 
-  ChatCtrl.deleteMessage
-);
-
+router.get("/messages", protect, ChatCtrl.getMessages);
+router.patch("/messages/:messageId", protect, ChatCtrl.editMessage);
+router.patch("/messages/:messageId/read", protect, ChatCtrl.markAsRead);
+router.delete("/messages/:messageId", protect, ChatCtrl.deleteMessage);
 
 /* ============================================================
-   GROUP & USER SPECIFIC FETCHING
+   GROUP & CHANNEL RESOLUTION
 ============================================================ */
 
-// Fetch groups the current logged-in user belongs to
-router.get(
-  "/my-groups",
-  protect,
-  ChatCtrl.getUserGroups
-);
-
+router.get("/my-groups", protect, ChatCtrl.getUserGroups);
 
 /* ============================================================
-   GROUP MANAGEMENT (Strictly Admin Only)
+   ADMIN MANAGEMENT (Multi-Select & System Control)
 ============================================================ */
 
-// Create a new group
-router.post(
-  "/groups/create",
-  protect,
-  authorize("admin"),
-  ChatCtrl.adminCreateGroup
-);
-
-// Update group details (Name/Status)
-router.patch(
-  "/groups/:groupId",
-  protect,
-  authorize("admin"),
-  ChatCtrl.adminUpdateGroup
-);
-
-// Add members to a group
-router.post(
-  "/groups/:groupId/members",
-  protect,
-  authorize("admin"),
-  ChatCtrl.adminAddMembers
-);
-
-// Remove a member from a group
-router.delete(
-  "/groups/:groupId/members/:userId",
-  protect,
-  authorize("admin"),
-  ChatCtrl.adminRemoveMember
-);
-
-// Fetch all groups (Master list for Admin dashboard)
-router.get(
-  "/groups",
-  protect,
-  authorize("admin"),
-  ChatCtrl.adminGetGroups
-);
-
-/* ============================================================
-   SYSTEM MONITORING & MESSAGING (Admin Only)
-============================================================ */
-
-// Global monitor: fetch all messages
-router.get(
-  "/admin/messages",
-  protect,
-  authorize("admin"),
-  ChatCtrl.adminGetAllMessages
-);
-
-// Fetch messaging statistics
-router.get(
-  "/admin/stats",
-  protect,
-  authorize("admin"),
-  ChatCtrl.adminGetStats
-);
-
-// Permanently delete a message
-router.delete(
-  "/admin/purge/:messageId",
-  protect,
-  authorize("admin"),
-  ChatCtrl.adminPermanentDelete
-);
-
-// Send a message (group or private)
+// Updated: Admin sends to multi-receivers, groups, or broadcast
 router.post(
   "/admin/send",
   protect,
   authorize("admin"),
   upload.single("image"),
-  ChatCtrl.adminSendMessage
+  ChatCtrl.adminSendMessage 
 );
 
-// Fetch messages for a specific chat (user or group)
+router.get("/groups", protect, authorize("admin"), ChatCtrl.adminGetGroups);
+router.post("/groups/create", protect, authorize("admin"), ChatCtrl.adminCreateGroup);
+router.patch("/groups/:groupId", protect, authorize("admin"), ChatCtrl.adminUpdateGroup);
+router.post("/groups/:groupId/members", protect, authorize("admin"), ChatCtrl.adminAddMembers);
+router.delete("/groups/:groupId/members/:userId", protect, authorize("admin"), ChatCtrl.adminRemoveMember);
+
+router.get("/admin/messages", protect, authorize("admin"), ChatCtrl.adminGetAllMessages);
+router.get("/admin/stats", protect, authorize("admin"), ChatCtrl.adminGetStats);
+router.delete("/admin/purge/:messageId", protect, authorize("admin"), ChatCtrl.adminPermanentDelete);
+router.get("/chat/messages", protect, authorize("admin"), ChatCtrl.adminGetChatMessages);
+
+/* ============================================================
+   GUEST ROUTES (Read-Only Policy)
+============================================================ */
+
+// Fetch Guest-specific channels (Registry Admin & Broadcasts)
 router.get(
-  "/chat/messages",
-  protect,
-  authorize("admin"),
-  ChatCtrl.adminGetChatMessages
-);
-
-//guest routes
-// Send a message (with optional image)
-router.post(
-  "/send",
+  "/guest/channels",
   protect,
   authorize("guest"),
-  ChatCtrl.guestSendMessage
+  ChatCtrl.guestGetChannels // New Controller
 );
 
-// Get messages for the logged-in guest
+// Get messages for the logged-in guest (Inbox only)
 router.get(
-  "/guest",
+  "/guest/messages",
   protect,
   authorize("guest"),
   ChatCtrl.guestGetMessages
 );
 
-// Mark a message as read
+// Guests can still mark messages as read to clear notifications
 router.patch(
-  "/read/:messageId",
+  "/guest/read/:messageId",
   protect,
   authorize("guest"),
   ChatCtrl.guestMarkAsRead
 );
+
+// Add this near your other GET routes
+router.get(
+  "/conversations/active", 
+  protect, 
+  authorize("admin"), 
+  ChatCtrl.getActiveConversations
+);
+
+// NOTE: router.post("/send") REMOVED to enforce Read-Only policy for guests
 
 export default router;
