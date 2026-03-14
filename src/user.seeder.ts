@@ -12,34 +12,10 @@ const seedUsers = async () => {
       {
         name: "Hon. Clara Otieno Omondi",
         email: "claraotieno23@gmail.com",
-        password: "123456789",
+        password: "Registrar@2026",
         role: "admin",
         isVerified: true,
         needsPasswordReset: true,
-      },
-      {
-        name: "Hon. Jeffrey Sagirai",
-        email: "jeffrey.sagirai@gmail.com",
-        password: "123456789",
-        role: "judge",
-        isVerified: true,
-        needsPasswordReset: true,
-      },
-      {
-        name: "Omondi Keith",
-        email: "kd.omondi1@gmail.com",
-        password: "123456789",
-        role: "guest",
-        isVerified: true,
-        needsPasswordReset: true,
-      },
-      {
-        name: "Omondi Keith",
-        email: "denniskeith62@gmail.com",
-        password: "123456789",
-        role: "judge",
-        isVerified: true,
-        needsPasswordReset: false,
       },
     ];
 
